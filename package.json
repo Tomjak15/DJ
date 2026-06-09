@@ -1,0 +1,16 @@
+{
+  "name": "abw-online-os",
+  "version": "2.0.0",
+  "private": true,
+  "description": "ABW OS z internetowa synchronizacja przez Express, JWT i PostgreSQL.",
+  "scripts": {
+    "install:backend": "npm --prefix backend install",
+    "migrate": "npm --prefix backend run migrate",
+    "start": "npm --prefix backend start",
+    "dev": "npm --prefix backend run dev",
+    "test": "npm --prefix backend test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

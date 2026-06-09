@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ABW OS | Australijskie Biuro Wielorybów</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app">
+      <section id="loginScreen" class="login-screen" aria-label="Ekran logowania ABW">
+        <div class="ocean-grid"></div>
+        <div class="login-radar">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <div class="login-frame">
+          <div class="scanline"></div>
+          <div class="brand-block">
+            <div class="classification">TAJNE // OCEANIC COMMAND NODE</div>
+            <h1>ABW</h1>
+            <p>Australijskie Biuro Wielorybów</p>
+          </div>
+          <div class="identity-scan" aria-hidden="true">
+            <div class="scan-core">
+              <div class="scan-eye"></div>
+              <div class="scan-sweep"></div>
+            </div>
+            <div class="scan-readouts">
+              <span>BIOMETRIA: GOTOWA</span>
+              <span>SONAR-ID: ONLINE</span>
+              <span>SZYFR: 4096-BIT</span>
+            </div>
+          </div>
+          <form id="loginForm" class="login-form">
+            <label>
+              Nick / ID agenta
+              <input id="loginNick" autocomplete="username" />
+            </label>
+            <label>
+              Hasło
+              <span class="password-field">
+                <input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••" />
+                <button id="passwordToggle" class="password-toggle" type="button" aria-label="Pokaż hasło" aria-pressed="false">
+                  <span class="eye-icon" aria-hidden="true"></span>
+                </button>
+              </span>
+            </label>
+            <button class="primary-action" type="submit">Autoryzuj dostęp</button>
+            <button id="showRegisterButton" class="ghost-action auth-switch" type="button">Utwórz konto</button>
+          </form>
+          <form id="registerForm" class="login-form hidden">
+            <label>
+              Imię i nazwisko
+              <input id="registerFullName" name="fullName" autocomplete="name" required />
+            </label>
+            <label>
+              Nick agenta
+              <input id="registerNick" name="nick" autocomplete="username" required />
+            </label>
+            <label>
+              Hasło
+              <span class="password-field">
+                <input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="8" required />
+                <button id="registerPasswordToggle" class="password-toggle" type="button" aria-label="Pokaż hasło" aria-pressed="false">
+                  <span class="eye-icon" aria-hidden="true"></span>
+                </button>
+              </span>
+            </label>
+            <button class="primary-action" type="submit">Zarejestruj konto</button>
+            <button id="showLoginButton" class="ghost-action auth-switch" type="button">Wróć do logowania</button>
+          </form>
+          <div class="login-meta">
+            <div id="loginStatus" class="status-pill ok">Konto aktywne</div>
+          </div>
+        </div>
+        <div id="accessGranted" class="access-granted" aria-hidden="true">ACCESS GRANTED</div>
+      </section>
+
+      <section id="osScreen" class="os-screen hidden" aria-label="Pulpit ABW">
+        <canvas id="ambientCanvas" class="ambient-canvas"></canvas>
+        <div id="alarmOverlay" class="alarm-overlay" aria-hidden="true"></div>
+
+        <header class="top-hud">
+          <div class="agent-card">
+            <div class="agent-mark">ABW</div>
+            <div>
+              <div id="agentName" class="agent-name">-</div>
+              <div id="agentMeta" class="agent-meta">-</div>
+            </div>
+          </div>
+          <div class="hud-metrics">
+            <div>
+              <span>Status systemu</span>
+              <strong id="systemStatus">STABILNY</strong>
+            </div>
+            <div>
+              <span>Aktywność konta</span>
+              <strong id="idleTimer">05:00</strong>
+            </div>
+            <div>
+              <span>Czas operacyjny</span>
+              <strong id="systemClock">--:--:--</strong>
+            </div>
+          </div>
+          <div class="top-actions">
+            <button id="soundToggle" class="icon-action" title="Przełącz dźwięk">SND</button>
+            <button id="fullscreenButton" class="icon-action" title="Pełny ekran">FS</button>
+            <button id="logoutButton" class="danger-action">Wyloguj</button>
+          </div>
+        </header>
+
+        <div class="desktop-shell">
+          <aside class="system-dock" aria-label="Zakładki systemu">
+            <button class="dock-item active" data-tab="dashboard"><span>CMD</span>Pulpit</button>
+            <button class="dock-item" data-tab="announcements"><span>ANN</span>Ogłoszenia</button>
+            <button class="dock-item" data-tab="info"><span>INF</span>Informacje</button>
+            <button class="dock-item" data-tab="shop"><span>QTR</span>Sklep</button>
+            <button class="dock-item" data-tab="notes"><span>NTK</span>Notatnik</button>
+            <button class="dock-item" data-tab="map"><span>MAP</span>Mapa</button>
+            <button class="dock-item" data-tab="missions"><span>MSN</span>Misje</button>
+            <button class="dock-item" data-tab="events"><span>EVT</span>Zdarzenia</button>
+            <button class="dock-item admin-only" data-tab="admin"><span>ADM</span>Admin</button>
+          </aside>
+
+          <main class="workspace">
+            <section id="tab-dashboard" class="tab-panel active"></section>
+            <section id="tab-announcements" class="tab-panel"></section>
+            <section id="tab-info" class="tab-panel"></section>
+            <section id="tab-shop" class="tab-panel"></section>
+            <section id="tab-notes" class="tab-panel"></section>
+            <section id="tab-map" class="tab-panel"></section>
+            <section id="tab-missions" class="tab-panel"></section>
+            <section id="tab-events" class="tab-panel"></section>
+            <section id="tab-admin" class="tab-panel admin-surface"></section>
+          </main>
+        </div>
+
+        <div id="eventPopup" class="event-popup hidden" role="status" aria-live="polite"></div>
+      </section>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="api-client.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
