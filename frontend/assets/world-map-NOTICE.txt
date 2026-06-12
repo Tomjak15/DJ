@@ -1,0 +1,3 @@
+World country boundaries: Natural Earth, 1:110m Cultural Vectors.
+Source: https://github.com/nvkelso/natural-earth-vector
+Natural Earth data is in the public domain.

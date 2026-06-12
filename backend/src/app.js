@@ -6,6 +6,7 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const { config } = require("./config");
+const QRCode = require("qrcode");
 const { pool, withTransaction } = require("./db");
 const {
   authenticate,
@@ -16,29 +17,38 @@ const {
   verifyPassword,
 } = require("./auth");
 const { getSyncRecords, saveSyncRecords } = require("./sync-service");
+const {
+  acknowledgeMessage,
+  createDirectConversation,
+  createGroupConversation,
+  deleteMessage,
+  getMessages,
+  listConversations,
+  markConversationRead,
+  reactToMessage,
+  searchMessages,
+  sendMessage,
+  setMessagePinned,
+} = require("./messenger-service");
+const { getUserManagementPermissions } = require("./permissions");
+const {
+  listDevices,
+  listPresence,
+  recordLoginDevice,
+  touchPresence,
+} = require("./security-service");
+const {
+  createBackup,
+  listBackups,
+  restoreBackup,
+  systemStatus,
+} = require("./backup-service");
 
 const FRONTEND_DIR = path.resolve(__dirname, "../../frontend");
 const USERNAME_PATTERN = /^[\p{L}\p{N}_.-]{3,48}$/u;
-const RANKS = [
-  "Rekrut",
-  "Szeregowy",
-  "Kadet",
-  "Kadet II stopnia",
-  "Młodszy sierżant",
-  "Starszy sierżant",
-  "Podchorąży",
-  "Chorąży",
-  "Chorążypodmajster",
-  "Majster klepka",
-  "Majster sztabowy",
-  "Majster bagieta",
-  "Podoficer",
-  "Oficer",
-  "Oficer pułkownik",
-  "Generał brygad",
-  "Generał dywizyjny",
-  "Generał generalny",
-];
+function normalizeRank(rank) {
+  return String(rank || "Rekrut").trim().slice(0, 80) || "Rekrut";
+}
 
 function validateCredentials(body) {
   const username = String(body.nick || body.username || "").trim();
@@ -50,8 +60,8 @@ function validateCredentials(body) {
   if (fullName.length < 2 || fullName.length > 120) {
     throw new Error("Imie i nazwisko musi miec 2-120 znakow");
   }
-  if (password.length < 8 || password.length > 200) {
-    throw new Error("Haslo musi miec co najmniej 8 znakow");
+  if (!password || password.length > 200) {
+    throw new Error("Haslo nie moze byc puste");
   }
   return { username, fullName, password };
 }
@@ -66,6 +76,17 @@ function databaseError(res, error) {
   }
   console.error(error);
   return res.status(500).json({ error: "Wewnetrzny blad serwera ABW" });
+}
+
+function requireCategoryManagement(category) {
+  return async (req, res, next) => {
+    if (req.auth.user.role === "admin") return next();
+    const permissions = await getUserManagementPermissions(pool, req.auth.user);
+    if (permissions[category] !== true) {
+      return res.status(403).json({ error: "Ta ranga nie ma uprawnienia do tej operacji" });
+    }
+    next();
+  };
 }
 
 async function createAccount({ username, fullName, password, role = "agent", rank = "Rekrut", badge }) {
@@ -89,7 +110,7 @@ async function createAccount({ username, fullName, password, role = "agent", ran
         fullName,
         passwordHash,
         finalRole,
-        RANKS.includes(finalRank) ? finalRank : "Rekrut",
+        normalizeRank(finalRank),
         badge || makeBadge(),
       ],
     );
@@ -119,10 +140,12 @@ function createApp() {
   }));
   app.use(cors({
     origin(origin, callback) {
-      if (!origin || !allowedOrigins.length || allowedOrigins.includes(origin)) {
+      if (!origin || origin === "null" || !allowedOrigins.length || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
-      return callback(new Error("Origin niedozwolony przez CORS"));
+      const error = new Error("Origin niedozwolony przez CORS");
+      error.status = 403;
+      return callback(error);
     },
   }));
   app.use(express.json({ limit: "25mb" }));
@@ -132,16 +155,47 @@ function createApp() {
     res.json({ ok: true, service: "abw-online-os", time: new Date().toISOString() });
   });
 
-  app.post("/register", async (req, res) => {
-    try {
-      const credentials = validateCredentials(req.body || {});
-      const row = await createAccount(credentials);
-      const user = publicUser(row, true);
-      res.status(201).json({ token: createToken(row), user });
-    } catch (error) {
-      if (error.code) return databaseError(res, error);
-      res.status(400).json({ error: error.message });
+  // Konta tworzy wylacznie zalogowany administrator przez POST /users.
+  // Jawna odpowiedz 403 blokuje rowniez stare wersje klienta i reczne wywolania.
+  app.post("/register", (req, res) => {
+    res.status(403).json({ error: "Konta ABW moze tworzyc tylko administrator" });
+  });
+
+  app.post("/account-status", async (req, res) => {
+    const identifier = String(req.body?.nick || req.body?.username || "").trim();
+    if (!identifier) {
+      return res.status(400).json({ error: "Podaj nick lub ID agenta" });
     }
+    const result = await pool.query(
+      `SELECT disabled, failed_attempts, locked_until
+         FROM users
+        WHERE LOWER(username) = LOWER($1)
+           OR LOWER(badge) = LOWER($1)
+        LIMIT 1`,
+      [identifier],
+    );
+    const user = result.rows[0];
+    if (!user) {
+      return res.json({
+        status: "unknown",
+        max_attempts: config.maxLoginAttempts,
+        remaining_attempts: config.maxLoginAttempts,
+        locked_until: null,
+      });
+    }
+    const lockedUntil = user.locked_until ? new Date(user.locked_until) : null;
+    const temporarilyLocked = Boolean(lockedUntil && lockedUntil.getTime() > Date.now());
+    const failedAttempts = Number(user.failed_attempts || 0);
+    res.json({
+      status: user.disabled ? "disabled" : temporarilyLocked ? "locked" : "active",
+      disabled: Boolean(user.disabled),
+      max_attempts: config.maxLoginAttempts,
+      failed_attempts: failedAttempts,
+      remaining_attempts: user.disabled || temporarilyLocked
+        ? 0
+        : Math.max(0, config.maxLoginAttempts - failedAttempts),
+      locked_until: temporarilyLocked ? lockedUntil.toISOString() : null,
+    });
   });
 
   app.post("/login", async (req, res) => {
@@ -156,15 +210,31 @@ function createApp() {
     );
     const user = result.rows[0];
 
-    // Taki sam komunikat dla braku konta i zlego hasla ogranicza ujawnianie
-    // informacji o zarejestrowanych nickach.
-    if (!user) return res.status(401).json({ error: "Nieprawidlowy identyfikator lub haslo" });
-    if (user.disabled) return res.status(403).json({ error: "Konto zostalo zablokowane przez administratora" });
+    if (!user) {
+      return res.status(401).json({
+        error: "Nieprawidlowy identyfikator lub haslo",
+        status: "unknown",
+        max_attempts: config.maxLoginAttempts,
+        remaining_attempts: config.maxLoginAttempts,
+      });
+    }
+    if (user.disabled) {
+      return res.status(403).json({
+        error: "Konto zostalo zablokowane przez administratora",
+        status: "disabled",
+        disabled: true,
+        max_attempts: config.maxLoginAttempts,
+        remaining_attempts: 0,
+      });
+    }
 
     const lockedUntil = user.locked_until ? new Date(user.locked_until) : null;
     if (lockedUntil && lockedUntil.getTime() > Date.now()) {
       return res.status(423).json({
         error: "Konto jest czasowo zablokowane",
+        status: "locked",
+        max_attempts: config.maxLoginAttempts,
+        remaining_attempts: 0,
         locked_until: lockedUntil.toISOString(),
       });
     }
@@ -187,6 +257,10 @@ function createApp() {
         error: shouldLock
           ? `Konto zablokowane na ${config.lockMinutes} minut`
           : `Nieprawidlowe haslo. Pozostalo prob: ${config.maxLoginAttempts - attempts}`,
+        status: shouldLock ? "locked" : "active",
+        max_attempts: config.maxLoginAttempts,
+        failed_attempts: shouldLock ? config.maxLoginAttempts : attempts,
+        remaining_attempts: shouldLock ? 0 : config.maxLoginAttempts - attempts,
         locked_until: nextLock?.toISOString() || null,
       });
     }
@@ -199,7 +273,17 @@ function createApp() {
       [user.id],
     );
     const current = refreshed.rows[0];
-    res.json({ token: createToken(current), user: publicUser(current, true) });
+    const device = await recordLoginDevice(current.id, req.body, req);
+    await touchPresence(current.id, { status: "online" });
+    res.json({
+      token: createToken(current),
+      user: publicUser(current, true),
+      security: {
+        newDevice: device.isNew,
+        deviceId: device.deviceId,
+        deviceName: device.deviceName,
+      },
+    });
   });
 
   app.get("/sync", authenticate, async (req, res) => {
@@ -220,6 +304,242 @@ function createApp() {
     const result = await pool.query("SELECT * FROM users ORDER BY created_at ASC");
     const includeSecurity = req.auth.user.role === "admin";
     res.json({ users: result.rows.map((row) => publicUser(row, includeSecurity)) });
+  });
+
+  app.get("/users/:id/identity-qr", authenticate, async (req, res) => {
+    if (req.params.id !== req.auth.user.id && req.auth.user.role !== "admin") {
+      return res.status(403).json({ error: "Brak dostepu do legitymacji" });
+    }
+    const result = await pool.query(
+      "SELECT id, username, full_name, rank, badge FROM users WHERE id = $1",
+      [req.params.id],
+    );
+    const user = result.rows[0];
+    if (!user) return res.status(404).json({ error: "Nie znaleziono konta" });
+    const payload = [
+      "ABW-ID",
+      user.id,
+      user.username,
+      user.badge,
+      user.rank,
+    ].join("|");
+    const dataUrl = await QRCode.toDataURL(payload, {
+      errorCorrectionLevel: "H",
+      margin: 1,
+      width: 260,
+      color: { dark: "#04131f", light: "#ffffff" },
+    });
+    return res.json({ dataUrl, qrDataUrl: dataUrl, payload });
+  });
+
+  app.get("/messages", authenticate, async (req, res) => {
+    res.json({ conversations: await listConversations(req.auth.user.id) });
+  });
+
+  app.get("/messages/search", authenticate, async (req, res) => {
+    res.json({ results: await searchMessages(req.auth.user.id, req.query.q) });
+  });
+
+  app.post("/messages/direct", authenticate, async (req, res) => {
+    try {
+      const conversationId = await createDirectConversation(req.auth.user.id, req.body?.userId);
+      res.status(201).json({ conversationId });
+    } catch (error) {
+      res.status(error.status || 400).json({ error: error.message });
+    }
+  });
+
+  app.post("/messages/groups", authenticate, requireCategoryManagement("messenger"), async (req, res) => {
+    try {
+      const conversationId = await createGroupConversation(
+        req.auth.user.id,
+        req.body?.name,
+        req.body?.memberIds,
+      );
+      res.status(201).json({ conversationId });
+    } catch (error) {
+      res.status(error.status || 400).json({ error: error.message });
+    }
+  });
+
+  app.get("/messages/:conversationId", authenticate, async (req, res) => {
+    try {
+      res.json({ messages: await getMessages(req.params.conversationId, req.auth.user.id) });
+    } catch (error) {
+      res.status(error.status || 400).json({ error: error.message });
+    }
+  });
+
+  app.post("/messages/:conversationId", authenticate, async (req, res) => {
+    try {
+      const message = await sendMessage(
+        req.params.conversationId,
+        req.auth.user.id,
+        req.body,
+      );
+      res.status(201).json({ message });
+    } catch (error) {
+      res.status(error.status || 400).json({ error: error.message });
+    }
+  });
+
+  app.post("/messages/:conversationId/read", authenticate, async (req, res) => {
+    try {
+      await markConversationRead(req.params.conversationId, req.auth.user.id);
+      res.status(204).end();
+    } catch (error) {
+      res.status(error.status || 400).json({ error: error.message });
+    }
+  });
+
+  app.post("/messages/:conversationId/:messageId/react", authenticate, async (req, res) => {
+    try {
+      await reactToMessage(
+        req.params.conversationId,
+        req.params.messageId,
+        req.auth.user.id,
+        req.body?.reaction,
+      );
+      res.status(204).end();
+    } catch (error) {
+      res.status(error.status || 400).json({ error: error.message });
+    }
+  });
+
+  app.post("/messages/:conversationId/:messageId/ack", authenticate, async (req, res) => {
+    try {
+      await acknowledgeMessage(
+        req.params.conversationId,
+        req.params.messageId,
+        req.auth.user.id,
+      );
+      res.status(204).end();
+    } catch (error) {
+      res.status(error.status || 400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/messages/:conversationId/:messageId/pin", authenticate, async (req, res) => {
+    try {
+      await setMessagePinned(
+        req.params.conversationId,
+        req.params.messageId,
+        req.auth.user.id,
+        req.body?.pinned,
+      );
+      res.status(204).end();
+    } catch (error) {
+      res.status(error.status || 400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/messages/:conversationId/:messageId", authenticate, async (req, res) => {
+    try {
+      await deleteMessage(
+        req.params.conversationId,
+        req.params.messageId,
+        req.auth.user,
+      );
+      res.status(204).end();
+    } catch (error) {
+      res.status(error.status || 400).json({ error: error.message });
+    }
+  });
+
+  app.post("/presence", authenticate, async (req, res) => {
+    await touchPresence(req.auth.user.id, req.body || {});
+    res.status(204).end();
+  });
+
+  app.get("/presence", authenticate, async (req, res) => {
+    res.json({ users: await listPresence() });
+  });
+
+  app.get("/security/devices", authenticate, async (req, res) => {
+    res.json({ devices: await listDevices(req.auth.user.id) });
+  });
+
+  app.post("/emergency/evacuate", authenticate, async (req, res) => {
+    const reason = String(req.body?.reason || "Procedura ewakuacji uruchomiona").trim().slice(0, 400);
+    const event = {
+      id: `evt-${crypto.randomUUID()}`,
+      type: "misja awaryjna",
+      severity: "red",
+      title: `EWAKUACJA // ${req.auth.user.username}`,
+      body: reason,
+      createdAt: Date.now(),
+      createdBy: req.auth.user.id,
+      classification: "tajne",
+    };
+    await withTransaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('shared:shared:events'))");
+      const current = await client.query(
+        `SELECT id, data FROM sync_records
+          WHERE scope = 'shared' AND record_key = 'events'
+          FOR UPDATE`,
+      );
+      const events = Array.isArray(current.rows[0]?.data) ? current.rows[0].data : [];
+      const nextEvents = [event, ...events].slice(0, 100);
+      if (current.rows[0]) {
+        await client.query(
+          "UPDATE sync_records SET data = $1::JSONB, updated_at = NOW() WHERE id = $2",
+          [JSON.stringify(nextEvents), current.rows[0].id],
+        );
+      } else {
+        await client.query(
+          `INSERT INTO sync_records (scope, record_key, owner_user_id, data)
+           VALUES ('shared', 'events', NULL, $1::JSONB)`,
+          [JSON.stringify(nextEvents)],
+        );
+      }
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('shared:shared:categoryActivity'))");
+      const activityResult = await client.query(
+        `SELECT id, data FROM sync_records
+          WHERE scope = 'shared' AND record_key = 'categoryActivity'
+          FOR UPDATE`,
+      );
+      const activity = activityResult.rows[0]?.data || {};
+      activity.events = {
+        sequence: Number(activity.events?.sequence || 0) + 1,
+        updatedAt: Date.now(),
+      };
+      if (activityResult.rows[0]) {
+        await client.query(
+          "UPDATE sync_records SET data = $1::JSONB, updated_at = NOW() WHERE id = $2",
+          [JSON.stringify(activity), activityResult.rows[0].id],
+        );
+      } else {
+        await client.query(
+          `INSERT INTO sync_records (scope, record_key, owner_user_id, data)
+           VALUES ('shared', 'categoryActivity', NULL, $1::JSONB)`,
+          [JSON.stringify(activity)],
+        );
+      }
+    });
+    res.status(201).json({ event });
+  });
+
+  app.get("/admin/status", authenticate, requireAdmin, async (req, res) => {
+    res.json(await systemStatus());
+  });
+
+  app.get("/admin/backups", authenticate, requireAdmin, async (req, res) => {
+    res.json({ backups: await listBackups() });
+  });
+
+  app.post("/admin/backups", authenticate, requireAdmin, async (req, res) => {
+    const id = await createBackup(req.auth.user.id, "manual", req.body?.label);
+    res.status(201).json({ id, backups: await listBackups() });
+  });
+
+  app.post("/admin/backups/:id/restore", authenticate, requireAdmin, async (req, res) => {
+    try {
+      await createBackup(req.auth.user.id, "manual", "Kopia przed przywróceniem");
+      await restoreBackup(req.params.id);
+      res.json({ restored: true });
+    } catch (error) {
+      res.status(error.status || 400).json({ error: error.message });
+    }
   });
 
   // Dodatkowe endpointy utrzymuja istniejacy panel administracyjny ABW.
@@ -247,14 +567,14 @@ function createApp() {
     const username = String(req.body.nick ?? current.username).trim();
     const fullName = String(req.body.fullName ?? current.full_name).trim();
     const badge = String(req.body.badge ?? current.badge).trim();
-    const rank = RANKS.includes(req.body.rank) ? req.body.rank : current.rank;
+    const rank = req.body.rank === undefined ? current.rank : normalizeRank(req.body.rank);
     const role = req.body.role === "admin" ? "admin" : req.body.role === "agent" ? "agent" : current.role;
     const password = String(req.body.password || "");
     if (!USERNAME_PATTERN.test(username) || fullName.length < 2 || !badge) {
       return res.status(400).json({ error: "Nieprawidlowe dane konta" });
     }
-    if (password && password.length < 8) {
-      return res.status(400).json({ error: "Nowe haslo musi miec co najmniej 8 znakow" });
+    if (password.length > 200) {
+      return res.status(400).json({ error: "Nowe haslo jest zbyt dlugie" });
     }
 
     try {
@@ -323,7 +643,9 @@ function createApp() {
   app.use((error, req, res, next) => {
     console.error(error);
     if (res.headersSent) return next(error);
-    res.status(500).json({ error: "Wewnetrzny blad serwera ABW" });
+    res.status(error.status || 500).json({
+      error: error.status === 403 ? error.message : "Wewnetrzny blad serwera ABW",
+    });
   });
 
   return app;

@@ -5,8 +5,7 @@ services:
     plan: free
     region: frankfurt
     buildCommand: npm --prefix backend install
-    preDeployCommand: npm --prefix backend run migrate
-    startCommand: npm --prefix backend start
+    startCommand: npm --prefix backend run migrate && npm --prefix backend start
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
@@ -19,7 +18,7 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: API_URL
-        value: https://abw1.onrender.com
+        value: https://abw-online-os.onrender.com
       - key: CORS_ORIGIN
         value: https://abw1.onrender.com
 

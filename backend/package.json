@@ -7,8 +7,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "migrate": "node src/migrate.js",
-    "check": "node --check src/server.js && node --check src/app.js && node --check src/sync-service.js",
-    "test": "node --test test/*.test.js"
+    "check": "node --check src/server.js && node --check src/app.js && node --check src/sync-service.js && node --check src/messenger-service.js && node --check src/security-service.js && node --check src/backup-service.js && node --check src/permissions.js",
+    "test": "node --test test"
   },
   "engines": {
     "node": ">=20"
@@ -20,6 +20,7 @@
     "express": "^5.2.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "qrcode": "^1.5.4"
   }
 }

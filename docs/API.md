@@ -8,17 +8,8 @@ Authorization: Bearer <JWT>
 
 ## POST /register
 
-Tworzy konto. Pierwsze konto w pustej bazie otrzymuje role `admin`.
-
-```json
-{
-  "fullName": "Tomek",
-  "nick": "Tomek",
-  "password": "bezpieczne-haslo"
-}
-```
-
-Odpowiedz zawiera `token` i obiekt `user`.
+Publiczna rejestracja jest wylaczona. Endpoint zwraca `403`, poniewaz konta
+moze tworzyc tylko zalogowany administrator przez `POST /users`.
 
 ## POST /login
 
@@ -72,6 +63,18 @@ administratorowi.
 - `POST /users` - dodanie konta,
 - `PATCH /users/:id` - edycja, blokada i reset blokady,
 - `DELETE /users/:id` - usuniecie konta.
+
+## Komunikator
+
+- `GET /messages` - lista rozmow i liczba nieprzeczytanych wiadomosci,
+- `POST /messages/direct` - utworzenie rozmowy z wybranym uzytkownikiem,
+- `POST /messages/groups` - utworzenie grupy,
+- `GET /messages/:conversationId` - pobranie wiadomosci,
+- `POST /messages/:conversationId` - wyslanie wiadomosci,
+- `POST /messages/:conversationId/read` - oznaczenie rozmowy jako przeczytanej.
+
+Nazwy uczestnikow komunikatora sa zwracane jako nicki. Dostep do komunikatora
+moze zostac wylaczony dla wybranej rangi przez administratora.
 
 ## GET /health
 

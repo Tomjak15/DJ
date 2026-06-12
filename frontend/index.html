@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ABW OS | Australijskie Biuro Wielorybów</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260612-16" />
   </head>
   <body>
     <div id="app" class="app">
@@ -49,31 +49,20 @@
               </span>
             </label>
             <button class="primary-action" type="submit">Autoryzuj dostęp</button>
-            <button id="showRegisterButton" class="ghost-action auth-switch" type="button">Utwórz konto</button>
-          </form>
-          <form id="registerForm" class="login-form hidden">
-            <label>
-              Imię i nazwisko
-              <input id="registerFullName" name="fullName" autocomplete="name" required />
-            </label>
-            <label>
-              Nick agenta
-              <input id="registerNick" name="nick" autocomplete="username" required />
-            </label>
-            <label>
-              Hasło
-              <span class="password-field">
-                <input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="8" required />
-                <button id="registerPasswordToggle" class="password-toggle" type="button" aria-label="Pokaż hasło" aria-pressed="false">
-                  <span class="eye-icon" aria-hidden="true"></span>
-                </button>
-              </span>
-            </label>
-            <button class="primary-action" type="submit">Zarejestruj konto</button>
-            <button id="showLoginButton" class="ghost-action auth-switch" type="button">Wróć do logowania</button>
           </form>
           <div class="login-meta">
-            <div id="loginStatus" class="status-pill ok">Konto aktywne</div>
+            <div class="login-account-panel">
+              <span class="login-meta-label">STAN KONTA</span>
+              <div id="accountStatus" class="account-status neutral">Wpisz nick lub ID agenta</div>
+              <div class="account-status-details">
+                <span id="accountAttempts">Próby hasła: -- / 3</span>
+                <span id="accountLockStatus">Blokada: brak danych</span>
+              </div>
+            </div>
+            <div class="login-server-row">
+              <span class="login-meta-label">ŁĄCZE ABW</span>
+              <div id="loginStatus" class="status-pill warn">Sprawdzanie serwera...</div>
+            </div>
           </div>
         </div>
         <div id="accessGranted" class="access-granted" aria-hidden="true">ACCESS GRANTED</div>
@@ -106,6 +95,11 @@
             </div>
           </div>
           <div class="top-actions">
+            <form id="globalSearchForm" class="global-search">
+              <input id="globalSearchInput" name="query" autocomplete="off" placeholder="Szukaj w systemie..." aria-label="Szukaj w całym systemie" />
+              <button class="icon-action" type="submit" title="Szukaj">⌕</button>
+            </form>
+            <button id="commandCenterButton" class="icon-action" title="Tryb centrum dowodzenia">CC</button>
             <button id="soundToggle" class="icon-action" title="Przełącz dźwięk">SND</button>
             <button id="fullscreenButton" class="icon-action" title="Pełny ekran">FS</button>
             <button id="logoutButton" class="danger-action">Wyloguj</button>
@@ -115,35 +109,63 @@
         <div class="desktop-shell">
           <aside class="system-dock" aria-label="Zakładki systemu">
             <button class="dock-item active" data-tab="dashboard"><span>CMD</span>Pulpit</button>
-            <button class="dock-item" data-tab="announcements"><span>ANN</span>Ogłoszenia</button>
-            <button class="dock-item" data-tab="info"><span>INF</span>Informacje</button>
-            <button class="dock-item" data-tab="shop"><span>QTR</span>Sklep</button>
-            <button class="dock-item" data-tab="notes"><span>NTK</span>Notatnik</button>
-            <button class="dock-item" data-tab="map"><span>MAP</span>Mapa</button>
-            <button class="dock-item" data-tab="missions"><span>MSN</span>Misje</button>
-            <button class="dock-item" data-tab="events"><span>EVT</span>Zdarzenia</button>
-            <button class="dock-item admin-only" data-tab="admin"><span>ADM</span>Admin</button>
+            <button class="dock-item" data-tab="profile"><span>ID</span>Agent</button>
+            <button class="dock-item" data-tab="announcements"><span>ANN</span>Ogłoszenia<i class="dock-badge hidden" data-badge-tab="announcements">0</i></button>
+            <button class="dock-item" data-tab="info"><span>INF</span>Informacje<i class="dock-badge hidden" data-badge-tab="info">0</i></button>
+            <button class="dock-item" data-tab="shop"><span>QTR</span>Sklep<i class="dock-badge hidden" data-badge-tab="shop">0</i></button>
+            <button class="dock-item" data-tab="notes"><span>NTK</span>Notatnik<i class="dock-badge hidden" data-badge-tab="notes">0</i></button>
+            <button class="dock-item" data-tab="map"><span>MAP</span>Mapa<i class="dock-badge hidden" data-badge-tab="map">0</i></button>
+            <button class="dock-item" data-tab="clocks"><span>CLK</span>Zegary<i class="dock-badge hidden" data-badge-tab="clocks">0</i></button>
+            <button class="dock-item" data-tab="documents"><span>DOC</span>Dokumenty<i class="dock-badge hidden" data-badge-tab="documents">0</i></button>
+            <button class="dock-item" data-tab="calendar"><span>CAL</span>Kalendarz<i class="dock-badge hidden" data-badge-tab="calendar">0</i></button>
+            <button class="dock-item" data-tab="contacts"><span>CNT</span>Kontakty<i class="dock-badge hidden" data-badge-tab="contacts">0</i></button>
+            <button class="dock-item" data-tab="logistics"><span>LOG</span>Logistyka<i class="dock-badge hidden" data-badge-tab="logistics">0</i></button>
+            <button class="dock-item" data-tab="missions"><span>MSN</span>Misje<i class="dock-badge hidden" data-badge-tab="missions">0</i></button>
+            <button class="dock-item" data-tab="events"><span>EVT</span>Zdarzenia<i class="dock-badge hidden" data-badge-tab="events">0</i></button>
+            <button class="dock-item" data-tab="messenger"><span>COM</span>Komunikator<i class="dock-badge hidden" data-badge-tab="messenger">0</i></button>
+            <button class="dock-item admin-only" data-tab="admin"><span>ADM</span><b id="managementDockLabel">Admin</b></button>
           </aside>
 
           <main class="workspace">
             <section id="tab-dashboard" class="tab-panel active"></section>
+            <section id="tab-profile" class="tab-panel"></section>
             <section id="tab-announcements" class="tab-panel"></section>
             <section id="tab-info" class="tab-panel"></section>
             <section id="tab-shop" class="tab-panel"></section>
             <section id="tab-notes" class="tab-panel"></section>
             <section id="tab-map" class="tab-panel"></section>
+            <section id="tab-clocks" class="tab-panel"></section>
+            <section id="tab-documents" class="tab-panel"></section>
+            <section id="tab-calendar" class="tab-panel"></section>
+            <section id="tab-contacts" class="tab-panel"></section>
+            <section id="tab-logistics" class="tab-panel"></section>
             <section id="tab-missions" class="tab-panel"></section>
             <section id="tab-events" class="tab-panel"></section>
+            <section id="tab-messenger" class="tab-panel"></section>
             <section id="tab-admin" class="tab-panel admin-surface"></section>
           </main>
         </div>
 
         <div id="eventPopup" class="event-popup hidden" role="status" aria-live="polite"></div>
+        <div id="globalSearchOverlay" class="global-search-overlay hidden" role="dialog" aria-label="Wyniki wyszukiwania">
+          <div class="global-search-panel">
+            <div class="module-header">
+              <div>
+                <span class="module-kicker">GLOBAL SEARCH CORE</span>
+                <h2>Wyniki wyszukiwania</h2>
+                <p id="globalSearchSummary"></p>
+              </div>
+              <button class="icon-action" type="button" data-action="close-global-search" title="Zamknij">×</button>
+            </div>
+            <div id="globalSearchResults" class="global-search-results"></div>
+          </div>
+        </div>
       </section>
     </div>
 
-    <script src="config.js"></script>
-    <script src="api-client.js"></script>
-    <script src="app.js"></script>
+    <script src="assets/world-countries-110m.js?v=20260612-16"></script>
+    <script src="config.js?v=20260612-16"></script>
+    <script src="api-client.js?v=20260612-16"></script>
+    <script src="app.js?v=20260612-16"></script>
   </body>
 </html>

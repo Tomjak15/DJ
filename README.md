@@ -21,12 +21,12 @@ docs/       opis API i mechanizmu konfliktow
 4. Zatwierdz utworzenie uslugi `abw-online-os` i bazy `abw-online-db`.
 5. Po zakonczeniu wdrozenia otworz:
    **https://abw1.onrender.com**
-6. Kliknij **Utworz konto**. Pierwsze zarejestrowane konto automatycznie
-   otrzyma role administratora.
+6. Zaloguj sie na konto administratora. Nowe konta tworzy sie w zakladce
+   **Admin > Uzytkownicy**. Publiczna rejestracja jest wylaczona.
 
 `DATABASE_URL` jest pobierany z Render Postgres, a `JWT_SECRET` jest generowany
 automatycznie przez Blueprint. Migracja `database/schema.sql` uruchamia sie
-przed startem kazdego wdrozenia.
+automatycznie razem ze startem uslugi, co dziala rowniez na bezplatnym planie.
 
 Dokumentacja Render:
 
@@ -62,6 +62,9 @@ npm start
 - zmiany sa wysylane automatycznie po wykonaniu operacji,
 - notatnik zapisuje sie po kilku sekundach,
 - klient pobiera aktualizacje co 10 sekund,
+- komunikator obsluguje rozmowy prywatne, grupy i status przeczytania,
+- czerwone liczniki informuja o nowych wiadomosciach i zmianach w kategoriach,
+- administrator edytuje korpusy, rangi oraz dostep rang do kategorii,
 - rekordy wspolne sa widoczne dla wszystkich kont,
 - notatki, ustawienia, pliki i konfiguracja sa przypisane do konta,
 - administrator moze przegladac dane kont wymagane przez panel ABW,
