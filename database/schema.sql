@@ -160,6 +160,28 @@ CREATE TABLE IF NOT EXISTS login_devices (
 CREATE INDEX IF NOT EXISTS login_devices_user_idx
   ON login_devices (user_id, last_seen_at DESC);
 
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  device_id VARCHAR(160) NOT NULL,
+  device_name VARCHAR(160) NOT NULL DEFAULT 'Nieznane urzadzenie',
+  ip_address VARCHAR(80),
+  user_agent TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  revoked_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  revoke_reason VARCHAR(240)
+);
+
+CREATE INDEX IF NOT EXISTS user_sessions_user_idx
+  ON user_sessions (user_id, last_seen_at DESC);
+
+CREATE INDEX IF NOT EXISTS user_sessions_active_idx
+  ON user_sessions (expires_at DESC)
+  WHERE revoked_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS database_backups (
   id UUID PRIMARY KEY,
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,

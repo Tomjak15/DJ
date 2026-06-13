@@ -32,11 +32,16 @@ const {
 } = require("./messenger-service");
 const { getUserManagementPermissions } = require("./permissions");
 const {
+  createSession,
+  getMaintenanceState,
   listDevices,
   listPresence,
+  listSessions,
   recordLoginDevice,
+  revokeSession,
   touchPresence,
 } = require("./security-service");
+const { getAuditIntegrity } = require("./audit-service");
 const {
   createBackup,
   listBackups,
@@ -155,6 +160,10 @@ function createApp() {
     res.json({ ok: true, service: "abw-online-os", time: new Date().toISOString() });
   });
 
+  app.get("/system-status", async (req, res) => {
+    res.json({ maintenance: await getMaintenanceState() });
+  });
+
   // Konta tworzy wylacznie zalogowany administrator przez POST /users.
   // Jawna odpowiedz 403 blokuje rowniez stare wersje klienta i reczne wywolania.
   app.post("/register", (req, res) => {
@@ -227,6 +236,14 @@ function createApp() {
         remaining_attempts: 0,
       });
     }
+    const maintenance = await getMaintenanceState();
+    if (maintenance.enabled && user.role !== "admin") {
+      return res.status(503).json({
+        error: maintenance.message,
+        code: "MAINTENANCE",
+        maintenance,
+      });
+    }
 
     const lockedUntil = user.locked_until ? new Date(user.locked_until) : null;
     if (lockedUntil && lockedUntil.getTime() > Date.now()) {
@@ -274,9 +291,10 @@ function createApp() {
     );
     const current = refreshed.rows[0];
     const device = await recordLoginDevice(current.id, req.body, req);
+    const sessionId = await createSession(current.id, device, req);
     await touchPresence(current.id, { status: "online" });
     res.json({
-      token: createToken(current),
+      token: createToken(current, sessionId),
       user: publicUser(current, true),
       security: {
         newDevice: device.isNew,
@@ -459,6 +477,11 @@ function createApp() {
     res.json({ devices: await listDevices(req.auth.user.id) });
   });
 
+  app.post("/logout", authenticate, async (req, res) => {
+    await revokeSession(req.auth.sessionId, req.auth.user.id, "Wylogowanie uzytkownika");
+    res.status(204).end();
+  });
+
   app.post("/emergency/evacuate", authenticate, async (req, res) => {
     const reason = String(req.body?.reason || "Procedura ewakuacji uruchomiona").trim().slice(0, 400);
     const event = {
@@ -520,7 +543,65 @@ function createApp() {
   });
 
   app.get("/admin/status", authenticate, requireAdmin, async (req, res) => {
-    res.json(await systemStatus());
+    res.json({
+      ...(await systemStatus()),
+      maintenance: await getMaintenanceState(),
+    });
+  });
+
+  app.get("/admin/sessions", authenticate, requireAdmin, async (req, res) => {
+    res.json({ sessions: await listSessions() });
+  });
+
+  app.delete("/admin/sessions/:id", authenticate, requireAdmin, async (req, res) => {
+    if (req.params.id === req.auth.sessionId) {
+      return res.status(400).json({ error: "Nie mozna zdalnie zakonczyc biezacej sesji administratora" });
+    }
+    const revoked = await revokeSession(
+      req.params.id,
+      req.auth.user.id,
+      String(req.body?.reason || "Zdalne wylogowanie administratora"),
+    );
+    if (!revoked) return res.status(404).json({ error: "Nie znaleziono sesji" });
+    res.status(204).end();
+  });
+
+  app.get("/admin/audit-integrity", authenticate, requireAdmin, async (req, res) => {
+    res.json(await getAuditIntegrity());
+  });
+
+  app.post("/admin/maintenance", authenticate, requireAdmin, async (req, res) => {
+    const maintenance = {
+      enabled: Boolean(req.body?.enabled),
+      message: String(req.body?.message || "Trwaja prace serwisowe ABW.").trim().slice(0, 300),
+      updatedAt: Date.now(),
+      updatedBy: req.auth.user.username,
+    };
+    await withTransaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('shared:shared:systemConfig'))");
+      const current = await client.query(
+        `SELECT id, data FROM sync_records
+          WHERE scope = 'shared' AND record_key = 'systemConfig'
+          FOR UPDATE`,
+      );
+      const configData = current.rows[0]?.data && typeof current.rows[0].data === "object"
+        ? current.rows[0].data
+        : {};
+      const data = { ...configData, maintenance };
+      if (current.rows[0]) {
+        await client.query(
+          "UPDATE sync_records SET data = $1::JSONB, updated_at = NOW() WHERE id = $2",
+          [JSON.stringify(data), current.rows[0].id],
+        );
+      } else {
+        await client.query(
+          `INSERT INTO sync_records (scope, record_key, owner_user_id, data)
+           VALUES ('shared', 'systemConfig', NULL, $1::JSONB)`,
+          [JSON.stringify(data)],
+        );
+      }
+    });
+    res.json({ maintenance });
   });
 
   app.get("/admin/backups", authenticate, requireAdmin, async (req, res) => {

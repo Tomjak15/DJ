@@ -23,6 +23,9 @@
     "temporaryPasses",
     "equipmentAssets",
     "vehicles",
+    "cases",
+    "evidence",
+    "systemConfig",
   ];
 
   const RANKS = [
@@ -58,6 +61,7 @@
     ["info", "Informacje"],
     ["shop", "Sklep"],
     ["notes", "Notatnik"],
+    ["tasks", "Zadania"],
     ["map", "Mapa"],
     ["clocks", "Zegary"],
     ["documents", "Dokumenty"],
@@ -65,6 +69,7 @@
     ["contacts", "Kontakty"],
     ["logistics", "Logistyka"],
     ["missions", "Misje"],
+    ["cases", "Sprawy i dowody"],
     ["events", "Zdarzenia"],
     ["messenger", "Komunikator"],
   ];
@@ -81,6 +86,7 @@
     ["calendar", "Kalendarz i urlopy"],
     ["personnel", "Przepustki i personel"],
     ["logistics", "Sprzęt, magazyn i pojazdy"],
+    ["cases", "Tworzenie spraw i rejestracja dowodów"],
   ];
 
   const MANAGED_SHARED_KEYS = {
@@ -93,6 +99,7 @@
     calendar: "calendarEvents",
     personnel: "temporaryPasses",
     logistics: "equipmentAssets",
+    cases: "cases",
   };
 
   const MANAGEMENT_PANEL_CATEGORIES = [
@@ -106,6 +113,7 @@
     "calendar",
     "personnel",
     "logistics",
+    "cases",
   ];
 
   const DOCUMENT_TYPES = {
@@ -368,10 +376,13 @@
     },
     security: {
       devices: [],
+      sessions: [],
       serverStatus: null,
       backups: [],
+      auditIntegrity: null,
       loaded: false,
     },
+    activeDocumentId: "",
     identityQrs: {},
     identityQrLoading: new Set(),
   };
@@ -469,11 +480,18 @@
     });
     window.addEventListener("online", handleNetworkOnline);
     window.addEventListener("offline", handleNetworkOffline);
+    window.addEventListener("abw:maintenance", (event) => {
+      const maintenance = event.detail || {};
+      if (currentUser()?.role !== "admin") {
+        logout("maintenance");
+        setLoginStatus(maintenance.message || "Trwają prace serwisowe ABW.", "warn");
+      }
+    });
   }
 
   function defaultDb() {
     return {
-      schema: 6,
+      schema: 7,
       seedContentCleared: true,
       users: [],
       announcements: [],
@@ -563,6 +581,7 @@
         },
       ],
       notes: {},
+      tasks: {},
       carts: {},
       orders: [],
       identityCards: {},
@@ -572,6 +591,16 @@
       temporaryPasses: [],
       equipmentAssets: [],
       vehicles: [],
+      cases: [],
+      evidence: [],
+      systemConfig: {
+        maintenance: {
+          enabled: false,
+          message: "Trwają prace serwisowe ABW.",
+          updatedAt: 0,
+          updatedBy: "",
+        },
+      },
       settings: {},
       files: {},
       configuration: {},
@@ -670,6 +699,7 @@
       info: Array.isArray(db.info) ? db.info : fresh.info,
       products: Array.isArray(db.products) ? db.products : fresh.products,
       notes: db.notes && typeof db.notes === "object" ? db.notes : fresh.notes,
+      tasks: db.tasks && typeof db.tasks === "object" ? db.tasks : fresh.tasks,
       carts: db.carts && typeof db.carts === "object" ? db.carts : fresh.carts,
       orders: Array.isArray(db.orders) ? db.orders : fresh.orders,
       identityCards: db.identityCards && typeof db.identityCards === "object" ? db.identityCards : fresh.identityCards,
@@ -679,6 +709,11 @@
       temporaryPasses: Array.isArray(db.temporaryPasses) ? db.temporaryPasses : fresh.temporaryPasses,
       equipmentAssets: Array.isArray(db.equipmentAssets) ? db.equipmentAssets : fresh.equipmentAssets,
       vehicles: Array.isArray(db.vehicles) ? db.vehicles : fresh.vehicles,
+      cases: Array.isArray(db.cases) ? db.cases : fresh.cases,
+      evidence: Array.isArray(db.evidence) ? db.evidence : fresh.evidence,
+      systemConfig: db.systemConfig && typeof db.systemConfig === "object"
+        ? db.systemConfig
+        : fresh.systemConfig,
       settings: db.settings && typeof db.settings === "object" ? db.settings : fresh.settings,
       files: db.files && typeof db.files === "object" ? db.files : fresh.files,
       configuration: db.configuration && typeof db.configuration === "object" ? db.configuration : fresh.configuration,
@@ -748,8 +783,24 @@
     db.documents.forEach((document) => {
       document.version = Math.max(1, Number(document.version || 1));
       document.history ||= [];
+      document.accessLog ||= [];
       document.classification ||= "jawne";
     });
+    db.cases.forEach((caseFile) => {
+      caseFile.status ||= "otwarta";
+      caseFile.classification ||= "poufne";
+      caseFile.assignedTo ||= [];
+    });
+    db.evidence.forEach((item) => {
+      item.chain ||= [];
+      item.checksum ||= "";
+    });
+    db.systemConfig.maintenance ||= {
+      enabled: false,
+      message: "Trwają prace serwisowe ABW.",
+      updatedAt: 0,
+      updatedBy: "",
+    };
     db.leaveRequests.forEach((request) => { request.status ||= "pending"; });
     db.temporaryPasses.forEach((pass) => { pass.active = pass.active !== false; });
     db.equipmentAssets.forEach((asset) => {
@@ -839,6 +890,7 @@
       .filter(([category]) => canManageCategory(category, user))
       .map(([, key]) => key);
     if (canManageCategory("logistics", user)) managedSharedKeys.push("vehicles");
+    if (canManageCategory("cases", user)) managedSharedKeys.push("evidence");
     const writableSharedKeys = isAdmin()
       ? SHARED_SYNC_KEYS
       : [...new Set(["missions", "logs", ...managedSharedKeys])];
@@ -853,6 +905,7 @@
     owners.forEach((owner) => {
       const privateRecords = [
         ["notes", state.db.notes[owner.id] || { text: "", updatedAt: 0 }],
+        ["tasks", state.db.tasks[owner.id] || []],
         ["cart", state.db.carts[owner.id] || []],
         ["orders", state.db.orders.filter((order) => order.userId === owner.id)],
         ["settings", state.db.settings[owner.id] || {}],
@@ -893,6 +946,7 @@
       state.db[record.key] = record.key === "rankConfig" ? normalizeRankConfig(data) : data;
     } else if (record.scope === "private" && ownerId) {
       if (record.key === "notes") state.db.notes[ownerId] = data;
+      if (record.key === "tasks") state.db.tasks[ownerId] = Array.isArray(data) ? data : [];
       if (record.key === "cart") state.db.carts[ownerId] = Array.isArray(data) ? data : [];
       if (record.key === "orders") {
         state.db.orders = state.db.orders
@@ -1499,6 +1553,9 @@
     } else {
       state.noteDirty = false;
     }
+    if (state.token && reason !== "expired" && reason !== "maintenance") {
+      await window.ABWApi.logout().catch(() => {});
+    }
     stopAlarmSound();
     state.token = "";
     window.ABWApi.clearToken();
@@ -1509,7 +1566,10 @@
     $("osScreen").classList.remove("alarm-mode");
     $("loginScreen").classList.remove("hidden");
     $("loginPassword").value = "";
-    setLoginStatus(reason === "auto" ? "Sesja wygasła po 5 minutach bez aktywności" : "Konto aktywne", reason === "auto" ? "warn" : "ok");
+    const logoutMessage = reason === "auto"
+      ? "Sesja wygasła po 5 minutach bez aktywności"
+      : reason === "maintenance" ? "System jest w trybie konserwacji" : "Konto aktywne";
+    setLoginStatus(logoutMessage, ["auto", "maintenance"].includes(reason) ? "warn" : "ok");
     if (state.idleInterval) window.clearInterval(state.idleInterval);
     state.idleInterval = null;
     if (state.syncInterval) window.clearInterval(state.syncInterval);
@@ -1535,8 +1595,10 @@
     };
     state.security = {
       devices: [],
+      sessions: [],
       serverStatus: null,
       backups: [],
+      auditIntegrity: null,
       loaded: false,
     };
   }
@@ -1569,17 +1631,24 @@
         window.ABWApi.getDevices(),
       ];
       if (isAdmin()) {
-        tasks.push(window.ABWApi.getServerStatus(), window.ABWApi.getBackups());
+        tasks.push(
+          window.ABWApi.getServerStatus(),
+          window.ABWApi.getBackups(),
+          window.ABWApi.getSessions(),
+          window.ABWApi.getAuditIntegrity(),
+        );
       }
-      const [presenceData, devicesData, statusData, backupsData] = await Promise.all(tasks);
+      const [presenceData, devicesData, statusData, backupsData, sessionsData, auditData] = await Promise.all(tasks);
       state.messenger.presence = presenceData?.users || [];
       state.security.devices = devicesData?.devices || [];
       if (statusData) state.security.serverStatus = statusData;
       if (backupsData) state.security.backups = backupsData.backups || [];
+      if (sessionsData) state.security.sessions = sessionsData.sessions || [];
+      if (auditData) state.security.auditIntegrity = auditData;
       state.security.loaded = true;
       if (state.activeTab === "profile") renderProfile();
       if (state.activeTab === "messenger") renderMessenger();
-      if (state.activeTab === "admin" && ["status", "backups"].includes(state.activeAdminTab)) {
+      if (state.activeTab === "admin" && ["status", "backups", "sessions", "logs"].includes(state.activeAdminTab)) {
         renderAdmin();
       }
     } catch (error) {
@@ -1724,6 +1793,7 @@
       info: renderInfo,
       shop: renderShop,
       notes: renderNotes,
+      tasks: renderTasks,
       map: renderMap,
       clocks: renderClocks,
       documents: renderDocuments,
@@ -1731,6 +1801,7 @@
       contacts: renderContacts,
       logistics: renderLogistics,
       missions: renderMissions,
+      cases: renderCases,
       events: renderEvents,
       messenger: renderMessenger,
       admin: renderAdmin,
@@ -1757,10 +1828,23 @@
       stats: true,
       sonar: true,
       mission: true,
+      tasks: true,
+      cases: true,
       events: true,
       announcements: true,
       ...(currentConfiguration(user.id).dashboardWidgets || {}),
     };
+    const widgetLabels = {
+      stats: "Statystyki",
+      sonar: "Sonar",
+      mission: "Misja i feed",
+      tasks: "Zadania",
+      cases: "Sprawy",
+      events: "Zdarzenia",
+      announcements: "Ogłoszenia",
+    };
+    const savedOrder = currentConfiguration(user.id).dashboardWidgetOrder || [];
+    const widgetOrder = [...savedOrder.filter((key) => widgetLabels[key]), ...Object.keys(widgetLabels).filter((key) => !savedOrder.includes(key))];
     const missions = visibleMissions();
     const activeMission = missions.find((mission) => ["aktywna", "w trakcie"].includes(mission.status));
     const opsFeed = randomOperationalFeed();
@@ -1769,27 +1853,23 @@
       .slice(0, 4);
     const announcements = activeAnnouncements();
     const orderCount = state.db.orders.filter((order) => order.userId === user.id).length;
+    const taskSummary = userTasks().filter((task) => task.status !== "done").slice(0, 4);
+    const caseSummary = visibleCases().slice(0, 3);
     $("tab-dashboard").innerHTML = `
       ${header("COMMAND DESKTOP", "Pulpit operacyjny ABW", "Pełnoekranowy rdzeń dowodzenia: sonar, aktywność konta, misje, alerty i szybki podgląd zasobów.", `<button class="danger-action" data-action="trigger-evacuation">Procedura ewakuacji</button>`)}
       <details class="dashboard-settings">
         <summary>Widżety pulpitu</summary>
-        <div class="permission-grid">
-          ${Object.entries({
-            stats: "Statystyki",
-            sonar: "Sonar",
-            mission: "Misja i feed",
-            events: "Zdarzenia",
-            announcements: "Ogłoszenia",
-          }).map(([key, label]) => `<label><input type="checkbox" data-action="dashboard-widget" data-widget="${key}" ${dashboardWidgets[key] ? "checked" : ""} /> ${label}</label>`).join("")}
+        <div class="dashboard-widget-controls">
+          ${widgetOrder.map((key, index) => `<div><label><input type="checkbox" data-action="dashboard-widget" data-widget="${key}" ${dashboardWidgets[key] ? "checked" : ""} /> ${esc(widgetLabels[key])}</label><span><button class="icon-action" data-action="move-dashboard-widget" data-widget="${key}" data-direction="-1" title="Przesuń wyżej" ${index === 0 ? "disabled" : ""}>↑</button><button class="icon-action" data-action="move-dashboard-widget" data-widget="${key}" data-direction="1" title="Przesuń niżej" ${index === widgetOrder.length - 1 ? "disabled" : ""}>↓</button></span></div>`).join("")}
         </div>
       </details>
+      <div class="dashboard-widget-grid">
       <div class="stat-grid" data-dashboard-section="stats">
         <div class="stat-tile"><span>Ranga</span><strong>${esc(user.rank)}</strong><em>${esc(user.badge)}</em></div>
         <div class="stat-tile"><span>EXP</span><strong>${Number(user.exp).toLocaleString("pl-PL")}</strong><em>Postęp awansowy aktywny</em></div>
         <div class="stat-tile"><span>Zamówienia</span><strong>${orderCount}</strong><em>Bez limitów zaopatrzenia</em></div>
         <div class="stat-tile"><span>Ogłoszenia</span><strong>${announcements.length}</strong><em>Automatycznie wygasają</em></div>
       </div>
-      <div class="command-grid dashboard-primary-grid">
         <div class="module-panel sonar-panel" data-dashboard-section="sonar">
           <div class="module-header">
             <div>
@@ -1822,8 +1902,14 @@
             ${opsFeed.map(renderFeedItem).join("")}
           </div>
         </div>
-      </div>
-      <div class="command-grid dashboard-secondary-grid" style="margin-top:14px">
+        <div class="module-panel" data-dashboard-section="tasks">
+          <div class="module-header"><div><span class="module-kicker">PERSONAL TASK CORE</span><h2>Najbliższe zadania</h2><p>Prywatna kolejka czynności agenta.</p></div></div>
+          <div class="task-mini-list">${taskSummary.map((task) => `<button data-action="open-dashboard-tab" data-tab="tasks"><span class="mini-pill ${task.priority === "high" ? "danger" : "warn"}">${esc(task.priority)}</span><strong>${esc(task.title)}</strong><time>${task.dueAt ? esc(formatTime(task.dueAt)) : "bez terminu"}</time></button>`).join("") || `<div class="empty-state">Brak otwartych zadań.</div>`}</div>
+        </div>
+        <div class="module-panel" data-dashboard-section="cases">
+          <div class="module-header"><div><span class="module-kicker">CASE FILE CORE</span><h2>Aktywne sprawy</h2><p>Teczki dostępne dla zalogowanego agenta.</p></div></div>
+          <div class="task-mini-list">${caseSummary.map((caseFile) => `<button data-action="open-dashboard-tab" data-tab="cases"><span class="mini-pill">${esc(caseFile.code)}</span><strong>${esc(caseFile.title)}</strong><time>${esc(caseFile.status)}</time></button>`).join("") || `<div class="empty-state">Brak przypisanych spraw.</div>`}</div>
+        </div>
         <div class="module-panel" data-dashboard-section="events">
           <div class="module-header">
             <div>
@@ -1852,7 +1938,10 @@
     `;
     Object.entries(dashboardWidgets).forEach(([key, visible]) => {
       document.querySelectorAll(`[data-dashboard-section="${CSS.escape(key)}"]`)
-        .forEach((element) => element.classList.toggle("hidden", !visible));
+        .forEach((element) => {
+          element.classList.toggle("hidden", !visible);
+          element.style.order = String(widgetOrder.indexOf(key));
+        });
     });
     initSonar();
   }
@@ -2321,6 +2410,55 @@
     state.noteDirty = false;
   }
 
+  function userTasks() {
+    const user = currentUser();
+    if (!user) return [];
+    state.db.tasks[user.id] ||= [];
+    return state.db.tasks[user.id];
+  }
+
+  function renderTasks() {
+    const tasks = userTasks().slice().sort((left, right) => {
+      const completed = Number(left.status === "done") - Number(right.status === "done");
+      return completed || Number(left.dueAt || Number.MAX_SAFE_INTEGER) - Number(right.dueAt || Number.MAX_SAFE_INTEGER);
+    });
+    const openCount = tasks.filter((task) => task.status !== "done").length;
+    const overdueCount = tasks.filter((task) => task.status !== "done" && task.dueAt && task.dueAt < Date.now()).length;
+    $("tab-tasks").innerHTML = `
+      ${header("PERSONAL TASK CORE", "Moje zadania", "Prywatna lista czynności synchronizowana wyłącznie z kontem zalogowanego agenta.")}
+      <div class="task-layout">
+        <form id="taskForm" class="module-panel form-grid">
+          <label class="full">Zadanie<input name="title" maxlength="160" required /></label>
+          <label>Priorytet<select name="priority"><option value="normal">Normalny</option><option value="high">Wysoki</option><option value="low">Niski</option></select></label>
+          <label>Termin<input name="dueAt" type="datetime-local" /></label>
+          <label class="full">Opis<textarea name="description"></textarea></label>
+          <div class="full"><button class="primary-action" type="submit">Dodaj zadanie</button></div>
+        </form>
+        <aside class="module-panel task-summary">
+          <span class="module-kicker">TASK STATUS</span>
+          <strong>${openCount}</strong><span>otwartych</span>
+          <strong class="${overdueCount ? "danger-text" : ""}">${overdueCount}</strong><span>po terminie</span>
+        </aside>
+      </div>
+      <div class="task-list">
+        ${tasks.map((task) => `
+          <article class="task-row ${task.status === "done" ? "completed" : ""}">
+            <button class="task-check" data-action="toggle-task" data-id="${esc(task.id)}" title="${task.status === "done" ? "Przywróć" : "Oznacz jako wykonane"}">${task.status === "done" ? "✓" : ""}</button>
+            <div>
+              <div class="card-footer">
+                <span class="mini-pill ${task.priority === "high" ? "danger" : task.priority === "low" ? "" : "warn"}">${esc(task.priority)}</span>
+                ${task.dueAt ? `<time class="${task.status !== "done" && task.dueAt < Date.now() ? "danger-text" : ""}">${esc(formatTime(task.dueAt))}</time>` : ""}
+              </div>
+              <h3>${esc(task.title)}</h3>
+              <p>${esc(task.description || "")}</p>
+            </div>
+            <button class="message-delete" data-action="delete-task" data-id="${esc(task.id)}">Usuń</button>
+          </article>
+        `).join("") || `<div class="empty-state">Brak zadań. Lista jest gotowa na pierwszy wpis.</div>`}
+      </div>
+    `;
+  }
+
   function renderMap() {
     const visibleObjects = state.db.mapObjects.filter(isMapObjectVisible);
     const weather = oceanWeather(visibleObjects[0]?.lat || 0, visibleObjects[0]?.lon || 0);
@@ -2572,8 +2710,22 @@
       return;
     }
     const documents = visibleDocuments();
+    const activeDocument = documents.find((document) => document.id === state.activeDocumentId);
     $("tab-documents").innerHTML = `
       ${header("DOCUMENT CORE", "Centrum dokumentów i raportów", "Rozkazy, instrukcje, protokoły oraz gotowe raporty operacyjne przechowywane we wspólnym archiwum.", managementAction("documents", "Zarządzaj"))}
+      ${activeDocument ? `
+        <article class="module-panel document-reader">
+          <div class="module-header">
+            <div><span class="module-kicker">${esc(CLASSIFICATIONS[activeDocument.classification] || "JAWNE")} // WERSJA ${Number(activeDocument.version || 1)}</span><h2>${esc(activeDocument.title)}</h2><p>${esc(activeDocument.author || "ABW CORE")} // ${esc(formatTime(activeDocument.updatedAt || activeDocument.createdAt))}</p></div>
+            <div class="inline-actions"><button class="ghost-action" data-action="print-document" data-id="${esc(activeDocument.id)}">Drukuj</button><button class="icon-action" data-action="close-document" title="Zamknij">×</button></div>
+          </div>
+          <div class="document-reader-body">${esc(activeDocument.body).replace(/\n/g, "<br>")}</div>
+          <h3>Historia otwarć</h3>
+          <div class="document-access-list">
+            ${(activeDocument.accessLog || []).slice(0, 30).map((entry) => `<div><strong>${esc(entry.nick)} // ${esc(entry.action || "otwarcie")}</strong><span>${esc(entry.device || "urządzenie")}</span><time>${esc(formatTime(entry.time))}</time></div>`).join("") || `<div class="empty-state">Brak wcześniejszych otwarć.</div>`}
+          </div>
+        </article>
+      ` : ""}
       <div class="report-generator-grid">
         ${[
           ["daily", "Raport dzienny", "Aktywność, zdarzenia, misje i zamówienia z ostatnich 24 godzin."],
@@ -2597,16 +2749,34 @@
               ${classificationBadge(document.classification)}
             </div>
             <h3>${esc(document.title)}</h3>
-            <p>${esc(document.body)}</p>
+            <p>${esc(String(document.body || "").slice(0, 180))}${String(document.body || "").length > 180 ? "…" : ""}</p>
             <div class="document-meta-line">
               <span>${esc(document.author || "ABW CORE")}</span>
               <time>${esc(formatTime(document.updatedAt || document.createdAt))}</time>
             </div>
-            <button class="ghost-action" data-action="print-document" data-id="${esc(document.id)}">Drukuj</button>
+            <div class="inline-actions"><button class="primary-action" data-action="open-document" data-id="${esc(document.id)}">Otwórz</button><button class="ghost-action" data-action="print-document" data-id="${esc(document.id)}">Drukuj</button></div>
           </article>
         `).join("") || `<div class="empty-state">Archiwum dokumentów jest puste.</div>`}
       </div>
     `;
+  }
+
+  function openDocument(id) {
+    const document = visibleDocuments().find((item) => item.id === id);
+    if (!document) return;
+    document.accessLog ||= [];
+    document.accessLog.unshift({
+      userId: currentUser()?.id || "",
+      nick: currentUser()?.nick || "admin",
+      device: state.security.devices[0]?.deviceName || navigator.platform || "urządzenie",
+      action: "otwarcie",
+      time: Date.now(),
+    });
+    document.accessLog = document.accessLog.slice(0, 200);
+    state.activeDocumentId = id;
+    logAction("otwarto dokument", `${document.title} // ${CLASSIFICATIONS[document.classification] || "JAWNE"}`);
+    saveDb();
+    renderDocuments();
   }
 
   function allLeaveRequests() {
@@ -2855,6 +3025,51 @@
       <div class="section-label archive-label"><span>ARCHIWUM OPERACJI</span><strong>${archived.length}</strong></div>
       <div class="mission-list mission-archive">
         ${archived.map(renderMissionCard).join("") || `<div class="empty-state">Archiwum jest puste.</div>`}
+      </div>
+    `;
+  }
+
+  function visibleCases() {
+    const user = currentUser();
+    if (!user) return [];
+    return state.db.cases
+      .filter((caseFile) => (
+        canViewClassified(caseFile.classification, user)
+        && (isAdmin() || canManageCategory("cases", user) || (caseFile.assignedTo || []).includes(user.id))
+      ))
+      .sort((left, right) => Number(right.updatedAt || right.createdAt) - Number(left.updatedAt || left.createdAt));
+  }
+
+  function renderCases() {
+    const cases = visibleCases();
+    $("tab-cases").innerHTML = `
+      ${header("CASE FILE CORE", "Teczki spraw", "Wspólne akta dochodzeń, przypisani agenci oraz zabezpieczony łańcuch dowodowy.", managementAction("cases", "Zarządzaj sprawami"))}
+      <div class="case-grid">
+        ${cases.map((caseFile) => {
+          const evidence = state.db.evidence.filter((item) => item.caseId === caseFile.id && !item.archivedAt);
+          return `
+            <article class="case-card">
+              <div class="card-footer">
+                <span class="mini-pill ${caseFile.status === "zamknięta" ? "ok" : caseFile.status === "wstrzymana" ? "warn" : ""}">${esc(caseFile.status)}</span>
+                ${classificationBadge(caseFile.classification)}
+                <span class="mini-pill">${evidence.length} dowodów</span>
+              </div>
+              <span class="module-kicker">${esc(caseFile.code)}</span>
+              <h3>${esc(caseFile.title)}</h3>
+              <p>${esc(caseFile.description || "")}</p>
+              <div class="case-agents">Agenci: ${(caseFile.assignedTo || []).map((id) => esc(findUser(id)?.nick || id)).join(", ") || "brak"}</div>
+              <div class="evidence-list">
+                ${evidence.map((item) => `
+                  <div class="evidence-row">
+                    <span class="mini-pill">${esc(item.type)}</span>
+                    <div><strong>${esc(item.label)}</strong><small>SHA-256: ${esc(String(item.checksum || "").slice(0, 18))}… // ${esc(item.collectedBy)}</small></div>
+                    ${item.fileData ? `<a class="ghost-action" href="${esc(item.fileData)}" download="${esc(item.fileName || item.label)}">Plik</a>` : ""}
+                  </div>
+                `).join("") || `<div class="empty-state">Brak zarejestrowanych dowodów.</div>`}
+              </div>
+            </article>
+          `;
+        }).join("") || `<div class="empty-state">Brak dostępnych teczek spraw.</div>`}
       </div>
     `;
   }
@@ -3207,8 +3422,10 @@
       ["logistics", "Logistyka"],
       ["map", "Mapa"],
       ["missions", "Misje"],
+      ["cases", "Sprawy i dowody"],
       ["events", "Zdarzenia"],
       ["notes", "Notatnik"],
+      ["sessions", "Aktywne sesje"],
       ["logs", "Logi"],
       ["backups", "Kopie i kosz"],
     ];
@@ -3252,8 +3469,10 @@
       logistics: renderAdminLogistics,
       map: renderAdminMap,
       missions: renderAdminMissions,
+      cases: renderAdminCases,
       events: renderAdminEvents,
       notes: renderAdminNotes,
+      sessions: renderAdminSessions,
       logs: renderAdminLogs,
       backups: renderAdminBackups,
     };
@@ -3284,6 +3503,19 @@
           <div><span>Rozmowy i kanały</span><strong>${Number(status.conversations)}</strong></div>
           <div><span>Ostatnia kopia</span><strong>${esc(formatTime(status.lastBackupAt))}</strong></div>
         </div>
+      </div>
+      <div class="admin-block" style="margin-top:14px">
+        <h3>Tryb konserwacji</h3>
+        <form id="adminMaintenanceForm" class="form-grid compact-form">
+          <label>Stan
+            <select name="enabled">
+              <option value="false" ${status.maintenance?.enabled ? "" : "selected"}>System dostępny</option>
+              <option value="true" ${status.maintenance?.enabled ? "selected" : ""}>Konserwacja - tylko admin</option>
+            </select>
+          </label>
+          <label class="full">Komunikat<input name="message" maxlength="300" value="${esc(status.maintenance?.message || "Trwają prace serwisowe ABW.")}" /></label>
+          <div class="full"><button class="danger-action" type="submit">Zastosuj stan systemu</button></div>
+        </form>
       </div>
       <div class="admin-block" style="margin-top:14px">
         <h3>Obecność agentów</h3>
@@ -3606,6 +3838,77 @@
             </div>
           </article>
         `).join("") || `<div class="empty-state">Brak dokumentów.</div>`}
+      </div>
+    `;
+  }
+
+  function renderAdminCases() {
+    return `
+      <div class="admin-grid">
+        <div class="admin-block">
+          <h3>Teczka sprawy</h3>
+          <form id="adminCaseForm" class="form-grid">
+            <label>Kod sprawy<input name="code" maxlength="40" placeholder="ABW-CAS-001" required /></label>
+            <label>Status<select name="status"><option value="otwarta">Otwarta</option><option value="wstrzymana">Wstrzymana</option><option value="zamknięta">Zamknięta</option></select></label>
+            <label class="full">Tytuł<input name="title" maxlength="160" required /></label>
+            <label>Klauzula<select name="classification">${classificationOptions("poufne")}</select></label>
+            <label>Przypisani agenci<select name="assignedTo" multiple size="5">${state.db.users.map((user) => `<option value="${esc(user.id)}">${esc(user.nick)}</option>`).join("")}</select></label>
+            <label class="full">Opis<textarea name="description" required></textarea></label>
+            <div class="full inline-actions"><button class="primary-action" type="submit">Zapisz sprawę</button><button class="ghost-action" type="reset">Wyczyść</button></div>
+          </form>
+        </div>
+        <div class="admin-block">
+          <h3>Rejestracja dowodu</h3>
+          <form id="adminEvidenceForm" class="form-grid">
+            <label>Sprawa<select name="caseId" required>${state.db.cases.map((item) => `<option value="${esc(item.id)}">${esc(item.code)} // ${esc(item.title)}</option>`).join("")}</select></label>
+            <label>Typ<select name="type"><option>cyfrowy</option><option>fizyczny</option><option>sonarowy</option><option>fotograficzny</option><option>dokument</option></select></label>
+            <label class="full">Nazwa<input name="label" maxlength="160" required /></label>
+            <label class="full">Opis<textarea name="description"></textarea></label>
+            <label class="full">Plik do 1 MB<input name="attachment" type="file" /></label>
+            <div class="full"><button class="primary-action" type="submit" ${state.db.cases.length ? "" : "disabled"}>Zabezpiecz dowód</button></div>
+          </form>
+        </div>
+      </div>
+      <div class="case-grid" style="margin-top:14px">
+        ${state.db.cases.map((caseFile) => `
+          <article class="case-card">
+            <div class="card-footer"><span class="mini-pill">${esc(caseFile.status)}</span>${classificationBadge(caseFile.classification)}</div>
+            <span class="module-kicker">${esc(caseFile.code)}</span>
+            <h3>${esc(caseFile.title)}</h3>
+            <p>${esc(caseFile.description)}</p>
+            <div class="evidence-list">
+              ${state.db.evidence.filter((item) => item.caseId === caseFile.id).map((item) => `
+                <div class="evidence-row ${item.archivedAt ? "archived" : ""}">
+                  <span class="mini-pill">${esc(item.type)}</span>
+                  <div><strong>${esc(item.label)}</strong><small>${esc(item.collectedBy)} // ${esc(formatTime(item.collectedAt))}<br>SHA-256 ${esc(item.checksum || "brak pliku")}</small></div>
+                  <button class="danger-action" data-action="archive-evidence" data-id="${esc(item.id)}" ${item.archivedAt ? "disabled" : ""}>${item.archivedAt ? "Zarchiwizowany" : "Archiwizuj"}</button>
+                </div>
+              `).join("") || `<div class="empty-state">Brak dowodów.</div>`}
+            </div>
+            <div class="row-actions">
+              <button data-action="admin-edit-case" data-id="${esc(caseFile.id)}">Edytuj</button>
+              <button data-action="admin-delete-case" data-id="${esc(caseFile.id)}">Usuń</button>
+            </div>
+          </article>
+        `).join("") || `<div class="empty-state">Brak spraw.</div>`}
+      </div>
+    `;
+  }
+
+  function renderAdminSessions() {
+    return `
+      <div class="admin-block">
+        <h3>Aktywne sesje urządzeń</h3>
+        <p class="muted">Zakończenie sesji wyloguje wskazane urządzenie przy następnym żądaniu do serwera.</p>
+        <div class="session-list">
+          ${state.security.sessions.map((session) => `
+            <div class="session-row ${session.active ? "" : "inactive"}">
+              <span class="mini-pill ${session.active ? "ok" : "danger"}">${session.active ? "AKTYWNA" : "ZAKOŃCZONA"}</span>
+              <div><strong>${esc(session.nick)} // ${esc(session.deviceName)}</strong><small>${esc(session.ipAddress)} // ostatnio ${esc(formatTime(session.lastSeenAt))}${session.revokeReason ? ` // ${esc(session.revokeReason)}` : ""}</small></div>
+              <button class="danger-action" data-action="revoke-session" data-id="${esc(session.id)}" ${session.active ? "" : "disabled"}>Wyloguj urządzenie</button>
+            </div>
+          `).join("") || `<div class="empty-state">Brak danych sesji.</div>`}
+        </div>
       </div>
     `;
   }
@@ -3986,12 +4289,17 @@
   function renderAdminLogs() {
     const logs = filteredLogs();
     const printable = printableLogGroups();
+    const integrity = state.security.auditIntegrity;
     const newCount = logs.filter((log) => !log.printedAt && !log.printExcluded).length;
     const printedCount = logs.filter((log) => log.printedAt).length;
     const excludedCount = logs.filter((log) => log.printExcluded).length;
     return `
       <div class="admin-block">
         <h3>System Core - pełna historia działań</h3>
+        <div class="log-integrity ${integrity?.valid ? "valid" : "invalid"}">
+          <strong>${integrity?.valid ? "ŁAŃCUCH LOGÓW PRAWIDŁOWY" : integrity ? "NARUSZENIE INTEGRALNOŚCI" : "WERYFIKACJA ŁAŃCUCHA..."}</strong>
+          <span>${integrity ? `${Number(integrity.count)} wpisów // ${esc(String(integrity.lastHash || "").slice(0, 20))}` : "Oczekiwanie na serwer"}</span>
+        </div>
         <div class="form-grid">
           <label>Filtr użytkownika<input id="logFilterUser" value="${esc(state.logFilters.user)}" placeholder="nick lub system" /></label>
           <label>Filtr akcji<input id="logFilterAction" value="${esc(state.logFilters.action)}" placeholder="np. logowanie" /></label>
@@ -4005,7 +4313,7 @@
           <div class="inline-actions">
             <button class="primary-action" data-action="print-logs" ${printable.length ? "" : "disabled"}>Drukuj (${newCount})</button>
             <button class="ghost-action" data-action="export-db">Eksport JSON</button>
-            <button class="danger-action" data-action="clear-logs">Wyczyść logi</button>
+            <button class="danger-action" data-action="clear-logs">Archiwizuj widoczne</button>
           </div>
         </div>
         <div class="log-print-summary">
@@ -4046,6 +4354,7 @@
 
   function filteredLogs() {
     return state.db.logs.filter((log) => {
+      if (log.archivedAt) return false;
       const userMatch = !state.logFilters.user || log.nick.toLowerCase().includes(state.logFilters.user.toLowerCase());
       const actionMatch = !state.logFilters.action || log.action.toLowerCase().includes(state.logFilters.action.toLowerCase());
       const categoryMatch = !state.logFilters.category || log.category === state.logFilters.category;
@@ -4105,6 +4414,8 @@
       adminPassForm: "personnel",
       adminAssetForm: "logistics",
       adminVehicleForm: "logistics",
+      adminCaseForm: "cases",
+      adminEvidenceForm: "cases",
     }[id] || "";
   }
 
@@ -4120,6 +4431,7 @@
     if (["admin-edit-calendar", "admin-delete-calendar", "leave-status"].includes(action)) return "calendar";
     if (["toggle-pass", "admin-delete-pass"].includes(action)) return "personnel";
     if (["admin-edit-asset", "admin-delete-asset", "admin-edit-vehicle", "admin-delete-vehicle"].includes(action)) return "logistics";
+    if (["admin-edit-case", "admin-delete-case", "archive-evidence"].includes(action)) return "cases";
     return "";
   }
 
@@ -4149,6 +4461,11 @@
     if (id === "leaveRequestForm") {
       event.preventDefault();
       handleLeaveRequestForm(event.target);
+      return;
+    }
+    if (id === "taskForm") {
+      event.preventDefault();
+      handleTaskForm(event.target);
       return;
     }
     if (id === "messengerDirectForm") {
@@ -4199,6 +4516,9 @@
     if (id === "adminPassForm") handleAdminPassForm(event.target);
     if (id === "adminAssetForm") handleAdminAssetForm(event.target);
     if (id === "adminVehicleForm") handleAdminVehicleForm(event.target);
+    if (id === "adminCaseForm") handleAdminCaseForm(event.target);
+    if (id === "adminEvidenceForm") await handleAdminEvidenceForm(event.target);
+    if (id === "adminMaintenanceForm") await handleAdminMaintenanceForm(event.target);
     if (id === "adminBackupForm") await handleAdminBackupForm(event.target);
   }
 
@@ -4226,8 +4546,15 @@
     if (action === "word-order") exportOrderWord(id);
     if (action === "print-all-orders") exportAllOrdersWord();
     if (action === "print-document") exportDocumentWord(id);
+    if (action === "open-document") openDocument(id);
+    if (action === "close-document") {
+      state.activeDocumentId = "";
+      renderDocuments();
+    }
     if (action === "print-system-report") exportSystemReportWord(target.dataset.reportType);
     if (action === "save-note") autosaveNote(true);
+    if (action === "toggle-task") toggleTask(id);
+    if (action === "delete-task") deleteTask(id);
     if (action === "toggle-layer") {
       state.globe.layers[target.dataset.layer] = target.checked;
       const user = currentUser();
@@ -4293,6 +4620,8 @@
     if (action === "open-global-result") openGlobalSearchResult(target);
     if (action === "ack-event") acknowledgeEvent(id);
     if (action === "dashboard-widget") updateDashboardWidget(target.dataset.widget, target.checked);
+    if (action === "move-dashboard-widget") moveDashboardWidget(target.dataset.widget, Number(target.dataset.direction));
+    if (action === "open-dashboard-tab") switchTab(target.dataset.tab);
     if (action === "admin-logout") logout("manual");
     if (action === "open-category-management") {
       if (!canManageCategory(target.dataset.tab)) return;
@@ -4355,6 +4684,10 @@
     if (action === "admin-delete-asset") deleteById("equipmentAssets", id, "sprzęt");
     if (action === "admin-edit-vehicle") editVehicle(id);
     if (action === "admin-delete-vehicle") deleteById("vehicles", id, "pojazd");
+    if (action === "admin-edit-case") editCase(id);
+    if (action === "admin-delete-case") deleteById("cases", id, "sprawę");
+    if (action === "archive-evidence") archiveEvidence(id);
+    if (action === "revoke-session") revokeRemoteSession(id);
     if (action === "restore-backup") restoreBackup(id);
     if (action === "restore-trash") restoreTrashItem(id);
     if (action === "toggle-log-excluded") updateLogPrintFlag(id, "excluded", target.checked);
@@ -4433,6 +4766,21 @@
     renderDashboard();
   }
 
+  function moveDashboardWidget(widget, direction) {
+    const user = currentUser();
+    if (!user || !widget || ![-1, 1].includes(direction)) return;
+    const defaults = ["stats", "sonar", "mission", "tasks", "cases", "events", "announcements"];
+    const configuration = currentConfiguration(user.id);
+    const order = [...(configuration.dashboardWidgetOrder || []).filter((key) => defaults.includes(key)), ...defaults.filter((key) => !(configuration.dashboardWidgetOrder || []).includes(key))];
+    const index = order.indexOf(widget);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= order.length) return;
+    [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
+    configuration.dashboardWidgetOrder = order;
+    saveDb();
+    renderDashboard();
+  }
+
   function toggleCommandCenter() {
     state.commandCenter = !state.commandCenter;
     document.body.classList.toggle("command-center-mode", state.commandCenter);
@@ -4462,6 +4810,12 @@
         : []),
       ...state.db.missions.filter((item) => contains(item.title, item.description, ...(item.objectives || []))).map((item) => ({
         type: "Misja", title: item.title, detail: item.status, tab: "missions", id: item.id,
+      })),
+      ...userTasks().filter((item) => contains(item.title, item.description)).map((item) => ({
+        type: "Zadanie", title: item.title, detail: item.status, tab: "tasks", id: item.id,
+      })),
+      ...visibleCases().filter((item) => contains(item.code, item.title, item.description)).map((item) => ({
+        type: "Sprawa", title: item.title, detail: `${item.code} // ${item.status}`, tab: "cases", id: item.id,
       })),
       ...state.db.mapObjects.filter((item) => contains(item.name, OBJECT_TYPES[item.type])).map((item) => ({
         type: "Mapa", title: item.name, detail: OBJECT_TYPES[item.type] || item.type, tab: "map", id: item.id,
@@ -4572,6 +4926,42 @@
     form.reset();
     renderCalendar();
     showToast("Wniosek został wysłany");
+  }
+
+  function handleTaskForm(form) {
+    const data = Object.fromEntries(new FormData(form));
+    const dueAt = data.dueAt ? new Date(data.dueAt).getTime() : 0;
+    userTasks().push({
+      id: uid("task"),
+      title: data.title.trim(),
+      description: data.description.trim(),
+      priority: data.priority,
+      status: "todo",
+      dueAt,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    logAction("dodano zadanie prywatne", data.title.trim(), null, { category: "system", source: "TASK CORE" });
+    form.reset();
+    saveDb();
+    renderTasks();
+  }
+
+  function toggleTask(id) {
+    const task = userTasks().find((item) => item.id === id);
+    if (!task) return;
+    task.status = task.status === "done" ? "todo" : "done";
+    task.updatedAt = Date.now();
+    saveDb();
+    renderTasks();
+  }
+
+  function deleteTask(id) {
+    const user = currentUser();
+    if (!user) return;
+    state.db.tasks[user.id] = userTasks().filter((task) => task.id !== id);
+    saveDb();
+    renderTasks();
   }
 
   async function handleDirectConversationForm(form) {
@@ -5104,6 +5494,7 @@
         author: currentUser()?.nick || "admin",
         version: 1,
         history: [],
+        accessLog: [],
         createdAt: now,
         updatedAt: now,
       });
@@ -5294,6 +5685,131 @@
       option.selected = (vehicle.crew || []).includes(option.value);
     });
     form.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function handleAdminCaseForm(form) {
+    const data = Object.fromEntries(new FormData(form));
+    const payload = {
+      code: data.code.trim(),
+      title: data.title.trim(),
+      description: data.description.trim(),
+      status: data.status,
+      classification: data.classification || "poufne",
+      assignedTo: Array.from(form.elements.assignedTo.selectedOptions).map((option) => option.value),
+      updatedAt: Date.now(),
+    };
+    if (form.dataset.editId) {
+      const caseFile = state.db.cases.find((item) => item.id === form.dataset.editId);
+      if (caseFile) Object.assign(caseFile, payload);
+      logAction("admin: edycja sprawy", `${payload.code} // ${payload.title}`);
+    } else {
+      state.db.cases.unshift({
+        id: uid("case"),
+        ...payload,
+        createdAt: Date.now(),
+        createdBy: currentUser()?.nick || "admin",
+      });
+      logAction("admin: utworzono sprawę", `${payload.code} // ${payload.title}`);
+    }
+    markCategoryActivity("cases");
+    form.reset();
+    delete form.dataset.editId;
+    saveDb();
+    renderAdmin();
+  }
+
+  function editCase(id) {
+    const caseFile = state.db.cases.find((item) => item.id === id);
+    const form = $("adminCaseForm");
+    if (!caseFile || !form) return;
+    form.dataset.editId = id;
+    form.elements.code.value = caseFile.code;
+    form.elements.title.value = caseFile.title;
+    form.elements.description.value = caseFile.description || "";
+    form.elements.status.value = caseFile.status;
+    form.elements.classification.value = caseFile.classification || "poufne";
+    Array.from(form.elements.assignedTo.options).forEach((option) => {
+      option.selected = (caseFile.assignedTo || []).includes(option.value);
+    });
+    form.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  async function handleAdminEvidenceForm(form) {
+    const data = Object.fromEntries(new FormData(form));
+    const file = form.elements.attachment.files[0];
+    if (file && file.size > 1024 * 1024) {
+      showToast("Plik dowodowy może mieć maksymalnie 1 MB");
+      return;
+    }
+    const checksum = file
+      ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())))
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("")
+      : "";
+    const now = Date.now();
+    state.db.evidence.unshift({
+      id: uid("evidence"),
+      caseId: data.caseId,
+      type: data.type,
+      label: data.label.trim(),
+      description: data.description.trim(),
+      fileName: file?.name || "",
+      fileData: file ? await readFileAsDataUrl(file) : "",
+      checksum,
+      collectedAt: now,
+      collectedBy: currentUser()?.nick || "admin",
+      chain: [{
+        action: "zabezpieczono",
+        time: now,
+        by: currentUser()?.nick || "admin",
+      }],
+    });
+    logAction("admin: zabezpieczono dowód", `${data.label.trim()} // ${checksum || "bez pliku"}`);
+    markCategoryActivity("cases");
+    form.reset();
+    saveDb();
+    renderAdmin();
+  }
+
+  function archiveEvidence(id) {
+    const evidence = state.db.evidence.find((item) => item.id === id);
+    if (!evidence || evidence.archivedAt) return;
+    evidence.archivedAt = Date.now();
+    evidence.archivedBy = currentUser()?.nick || "admin";
+    evidence.chain ||= [];
+    evidence.chain.push({ action: "zarchiwizowano", time: evidence.archivedAt, by: evidence.archivedBy });
+    logAction("admin: zarchiwizowano dowód", `${evidence.label} // ${evidence.checksum || "bez pliku"}`);
+    saveDb();
+    renderAdmin();
+  }
+
+  async function handleAdminMaintenanceForm(form) {
+    try {
+      const enabled = form.elements.enabled.value === "true";
+      const result = await window.ABWApi.setMaintenance(enabled, form.elements.message.value.trim());
+      state.db.systemConfig.maintenance = result.maintenance;
+      if (state.security.serverStatus) state.security.serverStatus.maintenance = result.maintenance;
+      logAction("admin: zmiana trybu konserwacji", enabled ? "włączono" : "wyłączono");
+      saveDb();
+      renderAdmin();
+      showToast(enabled ? "Tryb konserwacji został włączony" : "System jest ponownie dostępny");
+    } catch (error) {
+      showToast(error.message || "Nie udało się zmienić stanu systemu");
+    }
+  }
+
+  async function revokeRemoteSession(id) {
+    if (!window.confirm("Wylogować to urządzenie z systemu ABW?")) return;
+    try {
+      await window.ABWApi.revokeSession(id, "Zdalne wylogowanie z panelu administratora");
+      const data = await window.ABWApi.getSessions();
+      state.security.sessions = data.sessions || [];
+      logAction("admin: zdalne wylogowanie urządzenia", id);
+      saveDb();
+      renderAdmin();
+    } catch (error) {
+      showToast(error.message || "Nie udało się zakończyć sesji");
+    }
   }
 
   function handleAdminMapForm(form) {
@@ -5842,9 +6358,15 @@
   }
 
   function clearLogs() {
-    state.db.logs = [];
+    const visibleIds = new Set(filteredLogs().map((log) => log.id));
+    state.db.logs.forEach((log) => {
+      if (!visibleIds.has(log.id)) return;
+      log.archivedAt = Date.now();
+      log.archivedBy = currentUser()?.nick || "admin";
+    });
+    logAction("admin: archiwizacja logów", `${visibleIds.size} wpisów`, null, { category: "admin", source: "AUDIT CORE" });
     saveDb();
-    showToast("Logi wyczyszczone");
+    showToast("Widoczne logi przeniesiono do bezpiecznego archiwum");
     renderAdmin();
   }
 
@@ -5953,8 +6475,10 @@
   }
 
   function wordPage(title, meta, content, classification = "TAJNE") {
+    const classified = String(classification).toUpperCase() !== "JAWNE";
     return `
       <section class="page">
+        ${classified ? `<div class="security-watermark">${esc(classification)} // ${esc(currentUser()?.nick || "ABW")} // ${esc(new Date().toLocaleString("pl-PL"))}</div>` : ""}
         <header class="document-header">
           <div>
             <span>AUSTRALIJSKIE BIURO WIELORYBÓW</span>
@@ -5992,6 +6516,7 @@
             body { font-family: Arial, sans-serif; color: #111; font-size: 10pt; margin: 0; }
             .page { position: relative; min-height: 252mm; page-break-after: always; }
             .page:last-child { page-break-after: auto; }
+            .security-watermark { position: absolute; top: 112mm; left: 15mm; width: 180mm; color: #d9b8b8; font-size: 24pt; font-weight: bold; text-align: center; transform: rotate(-32deg); opacity: .42; z-index: -1; }
             .document-header { display: table; width: 100%; border-bottom: 3px solid #123b53; padding-bottom: 8px; }
             .document-header > div { display: table-cell; }
             .document-header > strong { display: table-cell; width: 35mm; text-align: right; color: #a30f1e; font-size: 12pt; }
@@ -6151,6 +6676,15 @@
   function exportDocumentWord(id) {
     const document = state.db.documents.find((item) => item.id === id);
     if (!document || !isAdmin() || !canViewClassified(document.classification)) return;
+    document.accessLog ||= [];
+    document.accessLog.unshift({
+      userId: currentUser()?.id || "",
+      nick: currentUser()?.nick || "admin",
+      device: state.security.devices[0]?.deviceName || navigator.platform || "urządzenie",
+      action: "wydruk",
+      time: Date.now(),
+    });
+    document.accessLog = document.accessLog.slice(0, 200);
     const page = wordPage(
       document.title,
       `
@@ -6161,6 +6695,8 @@
       CLASSIFICATIONS[document.classification] || "JAWNE",
     );
     downloadWordDocument(`ABW-dokument-${document.id}.doc`, document.title, page);
+    logAction("wydrukowano dokument", document.title);
+    saveDb();
   }
 
   function exportSystemReportWord(type) {

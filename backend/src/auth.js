@@ -4,12 +4,13 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const { config } = require("./config");
 const { pool } = require("./db");
+const { getMaintenanceState, isSessionActive } = require("./security-service");
 
 const PASSWORD_ROUNDS = 12;
 
-function createToken(user) {
+function createToken(user, sessionId) {
   return jwt.sign(
-    { sub: user.id, role: user.role, username: user.username },
+    { sub: user.id, role: user.role, username: user.username, jti: sessionId },
     config.jwtSecret,
     { expiresIn: config.jwtExpiresIn, issuer: "abw-online-os" },
   );
@@ -56,7 +57,18 @@ async function authenticate(req, res, next) {
     if (!user || user.disabled) {
       return res.status(401).json({ error: "Konto jest niedostepne" });
     }
-    req.auth = { token, user };
+    if (!(await isSessionActive(payload.jti, user.id))) {
+      return res.status(401).json({ error: "Sesja zostala zakonczona" });
+    }
+    const maintenance = await getMaintenanceState();
+    if (maintenance.enabled && user.role !== "admin") {
+      return res.status(503).json({
+        error: maintenance.message,
+        code: "MAINTENANCE",
+        maintenance,
+      });
+    }
+    req.auth = { token, user, sessionId: payload.jti };
     next();
   } catch (error) {
     return res.status(401).json({ error: "Token wygasl lub jest nieprawidlowy" });

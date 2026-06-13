@@ -12,6 +12,7 @@ const MANAGEMENT_CATEGORIES = [
   "calendar",
   "personnel",
   "logistics",
+  "cases",
 ];
 
 function rankManagementPermissions(rankConfig, rankName) {

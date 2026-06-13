@@ -64,6 +64,11 @@
       error.status = response.status;
       error.data = data;
       if (response.status === 401 && path !== "/login") setToken("");
+      if (response.status === 503 && data?.code === "MAINTENANCE") {
+        window.dispatchEvent(new CustomEvent("abw:maintenance", {
+          detail: data.maintenance || { enabled: true, message: error.message },
+        }));
+      }
       throw error;
     }
     return data;
@@ -86,7 +91,8 @@
         return data;
       } catch (error) {
         lastError = error;
-        const temporaryFailure = !error.status || [502, 503, 504].includes(error.status);
+        const temporaryFailure = !error.status
+          || ([502, 503, 504].includes(error.status) && error.data?.code !== "MAINTENANCE");
         if (!temporaryFailure || attempt === 2) throw error;
         await new Promise((resolve) => window.setTimeout(resolve, 2500));
       }
@@ -136,6 +142,8 @@
     deleteUser: (id) => request(`/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
     getConversations: () => request("/messages", { cache: "no-store" }),
     getDevices: () => request("/security/devices", { cache: "no-store" }),
+    getSessions: () => request("/admin/sessions", { cache: "no-store" }),
+    getAuditIntegrity: () => request("/admin/audit-integrity", { cache: "no-store" }),
     getMessages: (conversationId) => request(`/messages/${encodeURIComponent(conversationId)}`, {
       cache: "no-store",
     }),
@@ -149,12 +157,14 @@
     getSession,
     getPresence: () => request("/presence", { cache: "no-store" }),
     getServerStatus: () => request("/admin/status", { cache: "no-store" }),
+    getSystemStatus: () => request("/system-status", { cache: "no-store" }),
     getBackups: () => request("/admin/backups", { cache: "no-store" }),
     getSyncData,
     getToken,
     getUsers: () => request("/users", { cache: "no-store" }),
     health,
     login,
+    logout: () => request("/logout", { method: "POST" }),
     markConversationRead: (conversationId) => request(
       `/messages/${encodeURIComponent(conversationId)}/read`,
       { method: "POST" },
@@ -189,6 +199,14 @@
     }),
     restoreBackup: (id) => request(`/admin/backups/${encodeURIComponent(id)}/restore`, {
       method: "POST",
+    }),
+    revokeSession: (id, reason) => request(`/admin/sessions/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({ reason }),
+    }),
+    setMaintenance: (enabled, message) => request("/admin/maintenance", {
+      method: "POST",
+      body: JSON.stringify({ enabled, message }),
     }),
     updateUser: (id, changes) => request(`/users/${encodeURIComponent(id)}`, {
       method: "PATCH",

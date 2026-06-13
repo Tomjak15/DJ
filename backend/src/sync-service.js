@@ -7,12 +7,14 @@ const {
   getUserManagementPermissions,
   isAllowedMissionProgressUpdate,
 } = require("./permissions");
+const { mergeProtectedLogs } = require("./audit-service");
 
 const STRICT_ADMIN_SHARED_KEYS = new Set([
   "rankConfig",
   "categoryActivity",
   "trash",
   "documents",
+  "systemConfig",
 ]);
 
 const MANAGED_SHARED_KEY_CATEGORIES = {
@@ -26,6 +28,8 @@ const MANAGED_SHARED_KEY_CATEGORIES = {
   temporaryPasses: "personnel",
   equipmentAssets: "logistics",
   vehicles: "logistics",
+  cases: "cases",
+  evidence: "cases",
 };
 
 const ALLOWED_SHARED_KEYS = new Set([
@@ -44,6 +48,7 @@ const ALLOWED_PRIVATE_KEYS = new Set([
   "files",
   "configuration",
   "profile",
+  "tasks",
 ]);
 
 const SHARED_KEY_CATEGORIES = {
@@ -58,6 +63,8 @@ const SHARED_KEY_CATEGORIES = {
   temporaryPasses: "personnel",
   equipmentAssets: "logistics",
   vehicles: "logistics",
+  cases: "cases",
+  evidence: "cases",
 };
 
 function serializeRecord(row) {
@@ -153,6 +160,9 @@ async function saveSyncRecords(records, authUser) {
         && !isAllowedMissionProgressUpdate(existing?.data, record.data, authUser.id)
       ) {
         throw new Error("Brak uprawnien do tworzenia lub edycji misji");
+      }
+      if (record.key === "logs") {
+        record.data = mergeProtectedLogs(existing?.data, record.data, authUser);
       }
 
       // updated_at otrzymany od klienta oznacza wersje, na ktorej bazowala

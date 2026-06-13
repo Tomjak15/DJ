@@ -645,7 +645,7 @@ select:focus {
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr);
+  grid-template-columns: 198px minmax(0, 1fr);
   height: calc(100% - 78px);
   background: #06111d;
 }
@@ -2920,6 +2920,194 @@ body,
   margin-top: 9px;
 }
 
+.dashboard-widget-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.dashboard-widget-controls > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 8px;
+  border: 1px solid rgba(69, 220, 255, 0.13);
+  background: rgba(69, 220, 255, 0.035);
+}
+
+.dashboard-widget-controls span {
+  display: flex;
+  gap: 4px;
+}
+
+.dashboard-widget-controls .icon-action {
+  min-width: 30px;
+  min-height: 28px;
+  padding: 0;
+}
+
+.dashboard-widget-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dashboard-widget-grid > .stat-grid {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+
+.task-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.5fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.task-summary {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  align-content: center;
+  gap: 10px;
+}
+
+.task-summary .module-kicker {
+  grid-column: 1 / -1;
+}
+
+.task-summary strong {
+  color: var(--cyan);
+  font-size: 2rem;
+}
+
+.task-list,
+.task-mini-list,
+.case-grid,
+.evidence-list,
+.session-list,
+.document-access-list {
+  display: grid;
+  gap: 9px;
+}
+
+.task-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(69, 220, 255, 0.18);
+  background: rgba(7, 20, 31, 0.9);
+}
+
+.task-row.completed {
+  opacity: 0.58;
+}
+
+.task-row.completed h3 {
+  text-decoration: line-through;
+}
+
+.task-check {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(115, 255, 176, 0.46);
+  background: rgba(115, 255, 176, 0.08);
+  color: var(--green);
+  font-size: 1.2rem;
+}
+
+.task-mini-list > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(69, 220, 255, 0.13);
+  background: rgba(69, 220, 255, 0.035);
+  color: var(--text);
+  text-align: left;
+}
+
+.case-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.case-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(69, 220, 255, 0.2);
+  background: rgba(7, 20, 31, 0.92);
+}
+
+.case-agents {
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.evidence-row,
+.session-row,
+.document-access-list > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border: 1px solid rgba(69, 220, 255, 0.13);
+  background: rgba(4, 14, 23, 0.72);
+}
+
+.evidence-row small,
+.session-row small {
+  display: block;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.evidence-row.archived,
+.session-row.inactive {
+  opacity: 0.55;
+}
+
+.document-reader {
+  position: relative;
+  margin-bottom: 14px;
+  border-color: rgba(255, 206, 107, 0.35);
+}
+
+.document-reader-body {
+  min-height: 160px;
+  margin: 12px 0;
+  padding: 18px;
+  border: 1px solid rgba(69, 220, 255, 0.13);
+  background: #07131e;
+  line-height: 1.7;
+}
+
+.log-integrity {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 9px;
+  border-left: 3px solid var(--amber);
+  background: rgba(255, 206, 107, 0.07);
+}
+
+.log-integrity.valid {
+  border-color: var(--green);
+  background: rgba(115, 255, 176, 0.06);
+}
+
+.log-integrity.invalid {
+  border-color: var(--red);
+  background: rgba(255, 63, 73, 0.09);
+}
+
 .mission-contingency,
 .event-ack-list {
   margin: 10px 0;
@@ -3050,6 +3238,7 @@ body,
   .profile-layout,
   .map-layout,
   .notes-layout,
+  .task-layout,
   .admin-layout,
   .shop-layout,
   .calendar-layout {
@@ -3058,7 +3247,8 @@ body,
 
   .report-generator-grid,
   .document-grid,
-  .contact-grid {
+  .contact-grid,
+  .case-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -3135,6 +3325,16 @@ body,
   .contact-grid,
   .logistics-summary {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-widget-grid,
+  .dashboard-widget-controls,
+  .case-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-widget-grid > .stat-grid {
+    grid-column: auto;
   }
 
   .top-actions {
