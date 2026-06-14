@@ -30,7 +30,7 @@ function rankManagementPermissions(rankConfig, rankName) {
 }
 
 function canReadSharedRecord(authUser, recordKey) {
-  return recordKey !== "documents" || authUser?.role === "admin";
+  return !["documents", "printRegistry"].includes(recordKey) || authUser?.role === "admin";
 }
 
 function isAllowedMissionProgressUpdate(existingMissions, incomingMissions, userId) {

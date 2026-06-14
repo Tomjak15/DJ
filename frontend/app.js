@@ -26,6 +26,7 @@
     "cases",
     "evidence",
     "systemConfig",
+    "printRegistry",
   ];
 
   const RANKS = [
@@ -383,6 +384,8 @@
       loaded: false,
     },
     activeDocumentId: "",
+    pendingPrintJob: null,
+    printRegistryFilter: "all",
     identityQrs: {},
     identityQrLoading: new Set(),
   };
@@ -474,6 +477,7 @@
     document.addEventListener("click", handleActionClick);
     document.addEventListener("submit", handleFormSubmit);
     document.addEventListener("input", handleDocumentInput);
+    document.addEventListener("change", handleDocumentInput);
 
     ["mousemove", "mousedown", "keydown", "scroll", "touchstart"].forEach((eventName) => {
       window.addEventListener(eventName, markActivity, { passive: true });
@@ -491,7 +495,7 @@
 
   function defaultDb() {
     return {
-      schema: 7,
+      schema: 8,
       seedContentCleared: true,
       users: [],
       announcements: [],
@@ -601,6 +605,7 @@
           updatedBy: "",
         },
       },
+      printRegistry: [],
       settings: {},
       files: {},
       configuration: {},
@@ -714,6 +719,7 @@
       systemConfig: db.systemConfig && typeof db.systemConfig === "object"
         ? db.systemConfig
         : fresh.systemConfig,
+      printRegistry: Array.isArray(db.printRegistry) ? db.printRegistry : fresh.printRegistry,
       settings: db.settings && typeof db.settings === "object" ? db.settings : fresh.settings,
       files: db.files && typeof db.files === "object" ? db.files : fresh.files,
       configuration: db.configuration && typeof db.configuration === "object" ? db.configuration : fresh.configuration,
@@ -801,6 +807,10 @@
       updatedAt: 0,
       updatedBy: "",
     };
+    db.printRegistry.forEach((entry) => {
+      entry.status ||= "issued";
+      entry.history ||= [];
+    });
     db.leaveRequests.forEach((request) => { request.status ||= "pending"; });
     db.temporaryPasses.forEach((pass) => { pass.active = pass.active !== false; });
     db.equipmentAssets.forEach((asset) => {
@@ -1557,6 +1567,7 @@
       await window.ABWApi.logout().catch(() => {});
     }
     stopAlarmSound();
+    closeWordPrintDialog();
     state.token = "";
     window.ABWApi.clearToken();
     state.user = null;
@@ -3426,6 +3437,7 @@
       ["events", "Zdarzenia"],
       ["notes", "Notatnik"],
       ["sessions", "Aktywne sesje"],
+      ["printRegistry", "Rejestr wydruków"],
       ["logs", "Logi"],
       ["backups", "Kopie i kosz"],
     ];
@@ -3473,6 +3485,7 @@
       events: renderAdminEvents,
       notes: renderAdminNotes,
       sessions: renderAdminSessions,
+      printRegistry: renderAdminPrintRegistry,
       logs: renderAdminLogs,
       backups: renderAdminBackups,
     };
@@ -3911,6 +3924,98 @@
         </div>
       </div>
     `;
+  }
+
+  function renderAdminPrintRegistry() {
+    const registry = state.db.printRegistry
+      .filter((entry) => state.printRegistryFilter === "all" || entry.status === state.printRegistryFilter)
+      .slice()
+      .sort((left, right) => Number(right.createdAt) - Number(left.createdAt));
+    const counts = {
+      issued: state.db.printRegistry.filter((entry) => entry.status === "issued").length,
+      returned: state.db.printRegistry.filter((entry) => entry.status === "returned").length,
+      destroyed: state.db.printRegistry.filter((entry) => entry.status === "destroyed").length,
+      invalidated: state.db.printRegistry.filter((entry) => entry.status === "invalidated").length,
+    };
+    return `
+      <div class="admin-block">
+        <div class="module-header">
+          <div>
+            <span class="module-kicker">PRINT REGISTRY CORE</span>
+            <h2>Rejestr numerowanych egzemplarzy</h2>
+            <p>Każda kopia dokumentu Word ma własny numer, odbiorcę i nieusuwalną historię zmian statusu.</p>
+          </div>
+        </div>
+        <div class="logistics-summary print-registry-summary">
+          <div><span>Wydane</span><strong>${counts.issued}</strong></div>
+          <div><span>Zwrócone</span><strong>${counts.returned}</strong></div>
+          <div><span>Zniszczone</span><strong>${counts.destroyed}</strong></div>
+          <div><span>Unieważnione</span><strong>${counts.invalidated}</strong></div>
+        </div>
+        <label class="print-registry-filter">Status
+          <select id="printRegistryStatus">
+            <option value="all" ${state.printRegistryFilter === "all" ? "selected" : ""}>Wszystkie</option>
+            <option value="issued" ${state.printRegistryFilter === "issued" ? "selected" : ""}>Wydane</option>
+            <option value="returned" ${state.printRegistryFilter === "returned" ? "selected" : ""}>Zwrócone</option>
+            <option value="destroyed" ${state.printRegistryFilter === "destroyed" ? "selected" : ""}>Zniszczone</option>
+            <option value="invalidated" ${state.printRegistryFilter === "invalidated" ? "selected" : ""}>Unieważnione</option>
+          </select>
+        </label>
+      </div>
+      <div class="admin-block" style="margin-top:14px">
+        <div class="table-wrap">
+          <table class="data-table print-registry-table">
+            <thead><tr><th>Numer egzemplarza</th><th>Dokument</th><th>Odbiorca i cel</th><th>Utworzenie</th><th>Status</th><th>Zmiana statusu</th></tr></thead>
+            <tbody>
+              ${registry.map((entry) => `
+                <tr>
+                  <td><strong>${esc(entry.copyNumber)}</strong><br><small>${esc(entry.batchId)}</small></td>
+                  <td><span class="mini-pill">${esc(printDocumentTypeLabel(entry.documentType))}</span><br><strong>${esc(entry.title)}</strong><br><small>${esc(entry.sourceId || entry.filename || "-")} // ${Number(entry.pageCount || 1)} str.</small></td>
+                  <td><strong>${esc(entry.recipient || "Nie wskazano")}</strong><br><small>${esc(entry.purpose || "Brak opisu celu")}</small></td>
+                  <td>${esc(formatTime(entry.createdAt))}<br><small>${esc(entry.createdBy || "admin")} // kopia ${Number(entry.copyIndex || 1)}/${Number(entry.totalCopies || 1)}</small></td>
+                  <td><span class="mini-pill ${printStatusTone(entry.status)}">${esc(printStatusLabel(entry.status))}</span>${entry.statusChangedAt ? `<br><small>${esc(formatTime(entry.statusChangedAt))} // ${esc(entry.statusChangedBy || "-")}</small>` : ""}</td>
+                  <td>
+                    <select data-action="print-copy-status" data-id="${esc(entry.id)}">
+                      <option value="issued" ${entry.status === "issued" ? "selected" : ""}>Wydany</option>
+                      <option value="returned" ${entry.status === "returned" ? "selected" : ""}>Zwrócony</option>
+                      <option value="destroyed" ${entry.status === "destroyed" ? "selected" : ""}>Zniszczony</option>
+                      <option value="invalidated" ${entry.status === "invalidated" ? "selected" : ""}>Unieważniony</option>
+                    </select>
+                  </td>
+                </tr>
+              `).join("") || `<tr><td colspan="6">Brak zarejestrowanych egzemplarzy dla wybranego filtra.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function printDocumentTypeLabel(type) {
+    return {
+      logs: "Logi systemowe",
+      mission: "Misja",
+      order: "Zamówienie",
+      orders_registry: "Rejestr zamówień",
+      document: "Dokument",
+      system_report: "Raport systemowy",
+      identity: "Legitymacja",
+    }[type] || "Dokument ABW";
+  }
+
+  function printStatusLabel(status) {
+    return {
+      issued: "WYDANY",
+      returned: "ZWRÓCONY",
+      destroyed: "ZNISZCZONY",
+      invalidated: "UNIEWAŻNIONY",
+    }[status] || String(status || "wydany").toUpperCase();
+  }
+
+  function printStatusTone(status) {
+    if (status === "returned") return "ok";
+    if (["destroyed", "invalidated"].includes(status)) return "danger";
+    return "warn";
   }
 
   function renderAdminCalendar() {
@@ -4468,6 +4573,11 @@
       handleTaskForm(event.target);
       return;
     }
+    if (id === "printCopyForm") {
+      event.preventDefault();
+      confirmWordPrint(event.target);
+      return;
+    }
     if (id === "messengerDirectForm") {
       event.preventDefault();
       await handleDirectConversationForm(event.target);
@@ -4617,6 +4727,7 @@
     if (action === "delete-message") deleteMessageFromConversation(id);
     if (action === "contact-message") openContactConversation(id);
     if (action === "close-global-search") closeGlobalSearch();
+    if (action === "cancel-word-print") closeWordPrintDialog();
     if (action === "open-global-result") openGlobalSearchResult(target);
     if (action === "ack-event") acknowledgeEvent(id);
     if (action === "dashboard-widget") updateDashboardWidget(target.dataset.widget, target.checked);
@@ -4708,6 +4819,8 @@
   }
 
   function handleDocumentInput(event) {
+    if (event.type === "input" && event.target.matches("select")) return;
+    if (event.type === "change" && !event.target.matches("select")) return;
     if (event.target.dataset.action === "order-status") {
       updateOrderStatus(event.target.dataset.id, event.target.value);
       return;
@@ -4752,6 +4865,38 @@
       state.logFilters.category = event.target.value;
       renderAdmin();
     }
+    if (event.target.id === "printRegistryStatus") {
+      state.printRegistryFilter = event.target.value;
+      renderAdmin();
+    }
+    if (event.target.dataset.action === "print-copy-status") {
+      updatePrintCopyStatus(event.target.dataset.id, event.target.value);
+    }
+  }
+
+  function updatePrintCopyStatus(id, status) {
+    if (!isAdmin() || !["issued", "returned", "destroyed", "invalidated"].includes(status)) return;
+    const entry = state.db.printRegistry.find((item) => item.id === id);
+    if (!entry || entry.status === status) return;
+    const previous = entry.status;
+    entry.status = status;
+    entry.statusChangedAt = Date.now();
+    entry.statusChangedBy = currentUser()?.nick || "admin";
+    entry.history ||= [];
+    entry.history.unshift({
+      from: previous,
+      to: status,
+      time: entry.statusChangedAt,
+      by: entry.statusChangedBy,
+    });
+    logAction(
+      "admin: status egzemplarza",
+      `${entry.copyNumber} // ${printStatusLabel(previous)} -> ${printStatusLabel(status)}`,
+      null,
+      { category: "admin", source: "PRINT REGISTRY CORE" },
+    );
+    saveDb();
+    renderAdmin();
   }
 
   function updateDashboardWidget(widget, visible) {
@@ -6426,7 +6571,6 @@
       return;
     }
     const batchId = `LOG-${new Date().toISOString().replace(/\D/g, "").slice(0, 14)}`;
-    const printedAt = Date.now();
     const sourceIds = new Set(groups.flatMap((group) => group.sourceIds));
     const pages = [];
     const rowsPerPage = 8;
@@ -6462,23 +6606,32 @@
       `,
       "TAJNE",
     ));
-    downloadWordDocument(`ABW-logi-${batchId}.doc`, "Raport logów ABW", wordPages.join(""));
-    state.db.logs.forEach((log) => {
-      if (!sourceIds.has(log.id)) return;
-      log.printedAt = printedAt;
-      log.printBatchId = batchId;
-      log.printedBy = currentUser()?.nick || "admin";
+    downloadWordDocument(`ABW-logi-${batchId}.doc`, "Raport logów ABW", wordPages.join(""), {
+      documentType: "logs",
+      sourceId: batchId,
+      classification: "TAJNE",
+      onComplete(records) {
+        const printedAt = Date.now();
+        state.db.logs.forEach((log) => {
+          if (!sourceIds.has(log.id)) return;
+          log.printedAt = printedAt;
+          log.printBatchId = records[0]?.batchId || batchId;
+          log.printedBy = currentUser()?.nick || "admin";
+        });
+        if (state.activeTab === "admin" && state.activeAdminTab === "logs") renderAdmin();
+      },
     });
-    saveDb();
-    if (state.activeTab === "admin" && state.activeAdminTab === "logs") renderAdmin();
-    showToast(`Dokument Word ${batchId} utworzony i oznaczony jako wydrukowany`);
   }
 
   function wordPage(title, meta, content, classification = "TAJNE") {
     const classified = String(classification).toUpperCase() !== "JAWNE";
     return `
       <section class="page">
-        ${classified ? `<div class="security-watermark">${esc(classification)} // ${esc(currentUser()?.nick || "ABW")} // ${esc(new Date().toLocaleString("pl-PL"))}</div>` : ""}
+        ${classified ? `<div class="security-watermark">${esc(classification)} // {{ABW_COPY_ID}} // ${esc(currentUser()?.nick || "ABW")}</div>` : ""}
+        <div class="copy-register">
+          <b>EGZEMPLARZ {{ABW_COPY_ID}}</b>
+          <span>Kopia {{ABW_COPY_INDEX}} z {{ABW_COPY_TOTAL}}</span>
+        </div>
         <header class="document-header">
           <div>
             <span>AUSTRALIJSKIE BIURO WIELORYBÓW</span>
@@ -6498,11 +6651,121 @@
     `;
   }
 
-  function downloadWordDocument(filename, title, pagesHtml) {
+  function downloadWordDocument(filename, title, pagesHtml, metadata = {}) {
     if (!isAdmin()) {
       showToast("Drukowanie dokumentów jest dostępne wyłącznie dla administratora");
       return false;
     }
+    state.pendingPrintJob = {
+      filename,
+      title,
+      pagesHtml,
+      metadata: {
+        documentType: metadata.documentType || "document",
+        sourceId: metadata.sourceId || "",
+        classification: metadata.classification || "TAJNE",
+      },
+      onComplete: typeof metadata.onComplete === "function" ? metadata.onComplete : null,
+    };
+    const form = $("printCopyForm");
+    form.reset();
+    form.elements.copies.value = "1";
+    $("printCopySummary").textContent = `${title} // ${printDocumentTypeLabel(state.pendingPrintJob.metadata.documentType)}`;
+    $("printCopyOverlay").classList.remove("hidden");
+    form.elements.copies.focus();
+    return true;
+  }
+
+  function closeWordPrintDialog() {
+    state.pendingPrintJob = null;
+    $("printCopyOverlay")?.classList.add("hidden");
+  }
+
+  function printBatchId() {
+    const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+    const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+    return `ABW-PRN-${stamp}-${suffix}`;
+  }
+
+  async function printContentChecksum(content) {
+    if (!globalThis.crypto?.subtle) return "";
+    const bytes = new TextEncoder().encode(String(content || ""));
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  async function confirmWordPrint(form) {
+    const job = state.pendingPrintJob;
+    if (!job || !isAdmin()) return;
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      const copies = Math.max(1, Math.min(20, Number(form.elements.copies.value || 1)));
+      const recipient = form.elements.recipient.value.trim();
+      const purpose = form.elements.purpose.value.trim();
+      const batchId = printBatchId();
+      const createdAt = Date.now();
+      const pageCount = Math.max(1, (job.pagesHtml.match(/class="page"/g) || []).length);
+      const checksum = await printContentChecksum(job.pagesHtml);
+      const records = Array.from({ length: copies }, (_, index) => {
+        const copyNumber = `${batchId}-${String(index + 1).padStart(2, "0")}`;
+        return {
+          id: copyNumber,
+          copyNumber,
+          batchId,
+          copyIndex: index + 1,
+          totalCopies: copies,
+          title: job.title,
+          filename: job.filename,
+          documentType: job.metadata.documentType,
+          sourceId: job.metadata.sourceId,
+          classification: job.metadata.classification,
+          recipient,
+          purpose,
+          pageCount,
+          checksum,
+          status: "issued",
+          createdAt,
+          createdBy: currentUser()?.nick || "admin",
+          createdByUserId: currentUser()?.id || "",
+          device: state.security.devices[0]?.deviceName || navigator.platform || "urządzenie",
+          history: [{
+            from: "",
+            to: "issued",
+            time: createdAt,
+            by: currentUser()?.nick || "admin",
+          }],
+        };
+      });
+      const numberedPages = records.map((record) => (
+        job.pagesHtml
+          .replaceAll("{{ABW_COPY_ID}}", esc(record.copyNumber))
+          .replaceAll("{{ABW_COPY_INDEX}}", String(record.copyIndex))
+          .replaceAll("{{ABW_COPY_TOTAL}}", String(record.totalCopies))
+      )).join("");
+      saveWordBlob(job.filename, job.title, numberedPages);
+      state.db.printRegistry.unshift(...records);
+      logAction(
+        "zarejestrowano wydruk",
+        `${job.title} // ${copies} egz. // ${batchId}${recipient ? ` // odbiorca: ${recipient}` : ""}`,
+        null,
+        { category: "admin", source: "PRINT REGISTRY CORE" },
+      );
+      const onComplete = job.onComplete;
+      closeWordPrintDialog();
+      if (onComplete) onComplete(records);
+      await saveDb();
+      showToast(`Utworzono ${copies} numerowanych ${copies === 1 ? "egzemplarz" : "egzemplarzy"} // ${batchId}`);
+    } catch (error) {
+      showToast(error.message || "Nie udało się zarejestrować wydruku");
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
+  function saveWordBlob(filename, title, pagesHtml) {
     const html = `
       <!doctype html>
       <html xmlns:o="urn:schemas-microsoft-com:office:office"
@@ -6517,6 +6780,9 @@
             .page { position: relative; min-height: 252mm; page-break-after: always; }
             .page:last-child { page-break-after: auto; }
             .security-watermark { position: absolute; top: 112mm; left: 15mm; width: 180mm; color: #d9b8b8; font-size: 24pt; font-weight: bold; text-align: center; transform: rotate(-32deg); opacity: .42; z-index: -1; }
+            .copy-register { display: table; width: 100%; margin-bottom: 6px; padding: 5px 0; border-top: 1px solid #a30f1e; border-bottom: 1px solid #a30f1e; color: #7f111b; font-size: 8pt; }
+            .copy-register b, .copy-register span { display: table-cell; }
+            .copy-register span { text-align: right; }
             .document-header { display: table; width: 100%; border-bottom: 3px solid #123b53; padding-bottom: 8px; }
             .document-header > div { display: table-cell; }
             .document-header > strong { display: table-cell; width: 35mm; text-align: right; color: #a30f1e; font-size: 12pt; }
@@ -6559,7 +6825,6 @@
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1500);
-    return true;
   }
 
   function exportMissionWord(id) {
@@ -6603,8 +6868,14 @@
       `,
       CLASSIFICATIONS[mission.classification] || "TAJNE",
     );
-    downloadWordDocument(`ABW-misja-${mission.id}.doc`, mission.title, page);
-    logAction("dokument Word: misja", mission.title);
+    downloadWordDocument(`ABW-misja-${mission.id}.doc`, mission.title, page, {
+      documentType: "mission",
+      sourceId: mission.id,
+      classification: CLASSIFICATIONS[mission.classification] || "TAJNE",
+      onComplete() {
+        logAction("dokument Word: misja", mission.title);
+      },
+    });
   }
 
   function exportOrderWord(id) {
@@ -6635,8 +6906,14 @@
       `,
       "POUFNE",
     );
-    downloadWordDocument(`ABW-zamowienie-${order.id}.doc`, `Zamówienie ${order.id}`, page);
-    logAction("dokument Word: zamówienie", `${order.id} // ${order.nick || user?.nick || "-"}`);
+    downloadWordDocument(`ABW-zamowienie-${order.id}.doc`, `Zamówienie ${order.id}`, page, {
+      documentType: "order",
+      sourceId: order.id,
+      classification: "POUFNE",
+      onComplete() {
+        logAction("dokument Word: zamówienie", `${order.id} // ${order.nick || user?.nick || "-"}`);
+      },
+    });
   }
 
   function exportAllOrdersWord() {
@@ -6669,22 +6946,20 @@
       `ABW-pelny-rejestr-zamowien-${new Date().toISOString().slice(0, 10)}.doc`,
       "Pełny rejestr zamówień ABW",
       pages.join(""),
+      {
+        documentType: "orders_registry",
+        sourceId: `ORDERS-${new Date().toISOString().slice(0, 10)}`,
+        classification: "POUFNE",
+        onComplete() {
+          logAction("dokument Word: pełny rejestr zamówień", `${state.db.orders.length} zamówień`);
+        },
+      },
     );
-    logAction("dokument Word: pełny rejestr zamówień", `${state.db.orders.length} zamówień`);
   }
 
   function exportDocumentWord(id) {
     const document = state.db.documents.find((item) => item.id === id);
     if (!document || !isAdmin() || !canViewClassified(document.classification)) return;
-    document.accessLog ||= [];
-    document.accessLog.unshift({
-      userId: currentUser()?.id || "",
-      nick: currentUser()?.nick || "admin",
-      device: state.security.devices[0]?.deviceName || navigator.platform || "urządzenie",
-      action: "wydruk",
-      time: Date.now(),
-    });
-    document.accessLog = document.accessLog.slice(0, 200);
     const page = wordPage(
       document.title,
       `
@@ -6694,9 +6969,24 @@
       `<div class="document-body">${esc(document.body).replace(/\n/g, "<br>")}</div>`,
       CLASSIFICATIONS[document.classification] || "JAWNE",
     );
-    downloadWordDocument(`ABW-dokument-${document.id}.doc`, document.title, page);
-    logAction("wydrukowano dokument", document.title);
-    saveDb();
+    downloadWordDocument(`ABW-dokument-${document.id}.doc`, document.title, page, {
+      documentType: "document",
+      sourceId: document.id,
+      classification: CLASSIFICATIONS[document.classification] || "JAWNE",
+      onComplete(records) {
+        document.accessLog ||= [];
+        document.accessLog.unshift({
+          userId: currentUser()?.id || "",
+          nick: currentUser()?.nick || "admin",
+          device: state.security.devices[0]?.deviceName || navigator.platform || "urządzenie",
+          action: `wydruk ${records.length} egz.`,
+          copyNumbers: records.map((record) => record.copyNumber),
+          time: Date.now(),
+        });
+        document.accessLog = document.accessLog.slice(0, 200);
+        logAction("wydrukowano dokument", `${document.title} // ${records.length} egz.`);
+      },
+    });
   }
 
   function exportSystemReportWord(type) {
@@ -6724,7 +7014,14 @@
       `,
       "POUFNE",
     );
-    downloadWordDocument(`ABW-raport-${type}-${new Date().toISOString().slice(0, 10)}.doc`, "Raport systemowy ABW", page);
+    downloadWordDocument(`ABW-raport-${type}-${new Date().toISOString().slice(0, 10)}.doc`, "Raport systemowy ABW", page, {
+      documentType: "system_report",
+      sourceId: `REPORT-${type}-${new Date().toISOString().slice(0, 10)}`,
+      classification: "POUFNE",
+      onComplete() {
+        logAction("dokument Word: raport systemowy", `${type} // ${days} dni`);
+      },
+    });
   }
 
   function exportIdentityWord(id) {
@@ -6771,8 +7068,14 @@
       `,
       CLASSIFICATIONS[clearance],
     );
-    downloadWordDocument(`ABW-legitymacja-${user.nick}.doc`, `Legitymacja ${user.nick}`, page);
-    logAction("dokument Word: legitymacja", `${user.nick} // ${user.badge}`);
+    downloadWordDocument(`ABW-legitymacja-${user.nick}.doc`, `Legitymacja ${user.nick}`, page, {
+      documentType: "identity",
+      sourceId: user.id,
+      classification: CLASSIFICATIONS[clearance],
+      onComplete() {
+        logAction("dokument Word: legitymacja", `${user.nick} // ${user.badge}`);
+      },
+    });
   }
 
   function exportDb() {

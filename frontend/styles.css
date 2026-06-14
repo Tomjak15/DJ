@@ -1442,6 +1442,10 @@ select:focus {
   gap: 14px;
 }
 
+#adminContent {
+  min-width: 0;
+}
+
 .admin-nav {
   display: grid;
   align-content: start;
@@ -2734,6 +2738,48 @@ body,
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.58);
 }
 
+.print-copy-panel {
+  width: min(680px, 100%);
+  border-color: rgba(255, 206, 107, 0.48);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7), inset 0 0 34px rgba(255, 206, 107, 0.035);
+}
+
+.print-copy-notice {
+  display: grid;
+  gap: 5px;
+  margin: 14px 0;
+  padding: 11px;
+  border-left: 3px solid var(--amber);
+  background: rgba(255, 206, 107, 0.07);
+}
+
+.print-copy-notice span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.print-registry-filter {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 260px);
+  align-items: center;
+  justify-content: end;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.print-registry-table small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.print-registry-table select {
+  min-width: 145px;
+}
+
 .global-search-results {
   display: grid;
   gap: 7px;
@@ -3335,6 +3381,15 @@ body,
 
   .dashboard-widget-grid > .stat-grid {
     grid-column: auto;
+  }
+
+  .print-registry-filter {
+    grid-template-columns: 1fr;
+    justify-content: stretch;
+  }
+
+  .print-registry-filter select {
+    width: 100%;
   }
 
   .top-actions {

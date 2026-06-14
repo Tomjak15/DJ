@@ -42,9 +42,11 @@ test("drukowanie dokumentow nie jest uprawnieniem rangi", () => {
   assert.equal(permissions.documents, undefined);
 });
 
-test("rekord dokumentow jest widoczny tylko dla administratora", () => {
+test("dokumenty i rejestr wydrukow sa widoczne tylko dla administratora", () => {
   assert.equal(canReadSharedRecord({ role: "agent" }, "documents"), false);
   assert.equal(canReadSharedRecord({ role: "admin" }, "documents"), true);
+  assert.equal(canReadSharedRecord({ role: "agent" }, "printRegistry"), false);
+  assert.equal(canReadSharedRecord({ role: "admin" }, "printRegistry"), true);
   assert.equal(canReadSharedRecord({ role: "agent" }, "products"), true);
 });
 

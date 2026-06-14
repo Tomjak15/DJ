@@ -15,6 +15,7 @@ const STRICT_ADMIN_SHARED_KEYS = new Set([
   "trash",
   "documents",
   "systemConfig",
+  "printRegistry",
 ]);
 
 const MANAGED_SHARED_KEY_CATEGORIES = {
@@ -114,7 +115,10 @@ async function getSyncRecords(queryable, authUser) {
   const result = await queryable.query(
     `SELECT scope, record_key, owner_user_id, data, updated_at
        FROM sync_records
-      WHERE (scope = 'shared' AND ($2 = 'admin' OR record_key <> 'documents'))
+      WHERE (
+              scope = 'shared'
+              AND ($2 = 'admin' OR record_key NOT IN ('documents', 'printRegistry'))
+            )
          OR owner_user_id = $1
          OR $2 = 'admin'
          OR ($3::BOOLEAN AND scope = 'private' AND record_key = 'notes')
