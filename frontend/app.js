@@ -3899,6 +3899,7 @@
               `).join("") || `<div class="empty-state">Brak dowodów.</div>`}
             </div>
             <div class="row-actions">
+              ${isAdmin() ? `<button class="primary-action" data-action="word-case" data-id="${esc(caseFile.id)}">Drukuj</button>` : ""}
               <button data-action="admin-edit-case" data-id="${esc(caseFile.id)}">Edytuj</button>
               <button data-action="admin-delete-case" data-id="${esc(caseFile.id)}">Usuń</button>
             </div>
@@ -4000,6 +4001,7 @@
       document: "Dokument",
       system_report: "Raport systemowy",
       identity: "Legitymacja",
+      case_file: "Teczka sprawy",
     }[type] || "Dokument ABW";
   }
 
@@ -4809,6 +4811,7 @@
     if (action === "reset-all-log-print") resetAllPrintedLogs();
     if (action === "print-logs") printNewLogs();
     if (action === "word-identity") exportIdentityWord(id);
+    if (action === "word-case") exportCaseWord(id);
     if (action === "export-db") exportDb();
     if (action === "clear-logs") clearLogs();
     if (action?.startsWith("reset-")) {
@@ -6874,6 +6877,77 @@
       classification: CLASSIFICATIONS[mission.classification] || "TAJNE",
       onComplete() {
         logAction("dokument Word: misja", mission.title);
+      },
+    });
+  }
+
+  function exportCaseWord(id) {
+    const caseFile = state.db.cases.find((entry) => entry.id === id);
+    if (!caseFile || !isAdmin()) return;
+    const assignedAgents = (caseFile.assignedTo || [])
+      .map((userId) => findUser(userId))
+      .filter(Boolean);
+    const evidence = state.db.evidence
+      .filter((item) => item.caseId === caseFile.id)
+      .sort((left, right) => Number(left.collectedAt || 0) - Number(right.collectedAt || 0));
+    const page = wordPage(
+      `TECZKA SPRAWY: ${caseFile.title}`,
+      `
+        <p><b>Kod sprawy:</b> ${esc(caseFile.code || caseFile.id.toUpperCase())}</p>
+        <p><b>Status:</b> ${esc(caseFile.status || "otwarta")} &nbsp; <b>Utworzono:</b> ${esc(formatTime(caseFile.createdAt))}</p>
+        <p><b>Ostatnia aktualizacja:</b> ${esc(formatTime(caseFile.updatedAt || caseFile.createdAt))} &nbsp; <b>Założył:</b> ${esc(caseFile.createdBy || "ABW CORE")}</p>
+      `,
+      `
+        <h2>Opis sprawy</h2>
+        <p>${esc(caseFile.description || "Brak opisu.")}</p>
+        <h2>Przypisani agenci</h2>
+        <table>
+          <thead><tr><th>Lp.</th><th>Nick</th><th>Odznaka</th><th>Ranga</th></tr></thead>
+          <tbody>
+            ${assignedAgents.map((agent, index) => `
+              <tr><td>${index + 1}</td><td>${esc(agent.nick)}</td><td>${esc(agent.badge || "-")}</td><td>${esc(agent.rank || "-")}</td></tr>
+            `).join("") || `<tr><td colspan="4">Brak przypisanych agentów.</td></tr>`}
+          </tbody>
+        </table>
+        <h2>Rejestr dowodów</h2>
+        <table>
+          <thead><tr><th>Lp.</th><th>Dowód</th><th>Opis</th><th>Zabezpieczył</th><th>Status</th></tr></thead>
+          <tbody>
+            ${evidence.map((item, index) => `
+              <tr>
+                <td>${index + 1}</td>
+                <td><b>${esc(item.label)}</b><br><small>${esc(item.type || "-")} // ${esc(item.fileName || "bez pliku")}</small></td>
+                <td>${esc(item.description || "-")}<br><small>SHA-256: ${esc(item.checksum || "brak")}</small></td>
+                <td>${esc(item.collectedBy || "-")}<br><small>${esc(formatTime(item.collectedAt))}</small></td>
+                <td>${item.archivedAt ? `Zarchiwizowany<br><small>${esc(formatTime(item.archivedAt))} // ${esc(item.archivedBy || "-")}</small>` : "Aktywny"}</td>
+              </tr>
+            `).join("") || `<tr><td colspan="5">Brak zarejestrowanych dowodów.</td></tr>`}
+          </tbody>
+        </table>
+        <h2>Łańcuch dowodowy</h2>
+        <table>
+          <thead><tr><th>Czas</th><th>Dowód</th><th>Działanie</th><th>Osoba</th></tr></thead>
+          <tbody>
+            ${evidence.flatMap((item) => (item.chain || []).map((entry) => `
+              <tr><td>${esc(formatTime(entry.time))}</td><td>${esc(item.label)}</td><td>${esc(entry.action || "-")}</td><td>${esc(entry.by || "-")}</td></tr>
+            `)).join("") || `<tr><td colspan="4">Brak wpisów w łańcuchu dowodowym.</td></tr>`}
+          </tbody>
+        </table>
+        <p class="notice">Integralność załączników należy zweryfikować na podstawie sum SHA-256 zapisanych w rejestrze dowodów.</p>
+      `,
+      CLASSIFICATIONS[caseFile.classification] || "POUFNE",
+    );
+    downloadWordDocument(`ABW-sprawa-${caseFile.code || caseFile.id}.doc`, `Sprawa ${caseFile.code || caseFile.id}`, page, {
+      documentType: "case_file",
+      sourceId: caseFile.id,
+      classification: CLASSIFICATIONS[caseFile.classification] || "POUFNE",
+      onComplete(records) {
+        logAction(
+          "dokument Word: teczka sprawy",
+          `${caseFile.code || caseFile.id} // ${caseFile.title} // ${records.length} egz.`,
+          null,
+          { category: "admin", source: "CASE FILE CORE" },
+        );
       },
     });
   }
